@@ -1,0 +1,25 @@
+{
+  "name": "workers-sentinel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A self-hosted, Sentry-compatible error tracking system running on Cloudflare Workers",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @workers-sentinel/worker dev",
+    "build": "pnpm --filter @workers-sentinel/dashboard build && pnpm --filter @workers-sentinel/worker build",
+    "deploy": "pnpm build && pnpm --filter @workers-sentinel/worker deploy",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

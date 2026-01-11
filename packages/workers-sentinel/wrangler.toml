@@ -1,0 +1,22 @@
+name = "workers-sentinel"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Object bindings
+[[durable_objects.bindings]]
+name = "AUTH_STATE"
+class_name = "AuthState"
+
+[[durable_objects.bindings]]
+name = "PROJECT_STATE"
+class_name = "ProjectState"
+
+# Migrations for SQLite-backed Durable Objects
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AuthState", "ProjectState"]
+
+# Serve dashboard static assets
+[assets]
+directory = "../dashboard/dist"
