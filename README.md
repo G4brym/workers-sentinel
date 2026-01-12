@@ -140,6 +140,85 @@ pnpm deploy
 
 Workers Sentinel is compatible with official Sentry SDKs. Simply use your Sentinel DSN instead of a Sentry DSN.
 
+### Cloudflare Workers (Service Binding)
+
+For Cloudflare Workers, you can use [service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) for optimal performance. This routes requests internally within Cloudflare's network, avoiding external HTTP roundtrips and reducing latency.
+
+**Step 1:** Add a service binding to your worker's `wrangler.toml`:
+
+```toml
+name = "my-worker"
+main = "src/index.ts"
+
+[[services]]
+binding = "SENTINEL"
+service = "workers-sentinel"  # Your deployed Workers Sentinel worker name
+```
+
+**Step 2:** Create a custom transport that uses the service binding:
+
+```typescript
+// sentinel-transport.ts
+import type {
+  BaseTransportOptions,
+  Envelope,
+  Transport,
+  TransportMakeRequestResponse,
+} from '@sentry/core';
+import { createEnvelope, serializeEnvelope } from '@sentry/core';
+
+export function makeSentinelTransport(
+  sentinelBinding: Fetcher,
+  projectId: string,
+): (options: BaseTransportOptions) => Transport {
+  return (options: BaseTransportOptions): Transport => {
+    return {
+      send: async (envelope: Envelope): Promise<TransportMakeRequestResponse> => {
+        const serialized = serializeEnvelope(envelope);
+        const response = await sentinelBinding.fetch(
+          `https://sentinel/api/${projectId}/envelope/`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-sentry-envelope' },
+            body: serialized,
+          },
+        );
+        return { statusCode: response.status };
+      },
+      flush: async () => true,
+    };
+  };
+}
+```
+
+**Step 3:** Initialize Sentry with the custom transport:
+
+```typescript
+// index.ts
+import * as Sentry from '@sentry/cloudflare';
+import { makeSentinelTransport } from './sentinel-transport';
+
+interface Env {
+  SENTINEL: Fetcher;
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    Sentry.init({
+      dsn: 'https://<public_key>@sentinel/<project_id>',
+      transport: makeSentinelTransport(env.SENTINEL, '<project_id>'),
+    });
+
+    return Sentry.withSentry(env, ctx, async () => {
+      // Your worker code here
+      return new Response('Hello!');
+    });
+  },
+};
+```
+
+The DSN still includes your public key for authentication - the service binding only changes how the request is delivered, not what is sent.
+
 ### JavaScript / Browser
 
 ```javascript

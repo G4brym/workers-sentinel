@@ -34,6 +34,8 @@ pnpm --filter @workers-sentinel/dashboard build    # Production build
 
 # Worker-specific
 pnpm --filter @workers-sentinel/worker dev         # Wrangler dev
+pnpm --filter @workers-sentinel/worker test        # Run tests once
+pnpm --filter @workers-sentinel/worker test:watch  # Run tests in watch mode
 pnpm --filter @workers-sentinel/worker typecheck   # TypeScript check
 ```
 
@@ -82,8 +84,20 @@ https://{publicKey}@{host}/{projectId}
 
 The publicKey is validated against AuthState's projects table. ProjectState is accessed by project ID.
 
+### Service Bindings
+
+Cloudflare Workers can send events via service binding instead of HTTP for lower latency. The ingestion endpoint works identically - service bindings only change transport, not authentication. See README for custom transport setup.
+
 ## Technology Stack
 
 - **Worker**: Hono, Cloudflare Workers, Durable Objects with SQLite
 - **Dashboard**: Vue 3, Pinia, Vue Router, Tailwind CSS, Vite
 - **Tooling**: pnpm workspaces, Biome (lint/format), TypeScript
+
+## Testing
+
+Tests use `@cloudflare/vitest-pool-workers` with `isolatedStorage: false` and `singleWorker: true` for state persistence across tests within a describe block. DO operations may fail with "invalidating this Durable Object" error during test restarts—test utilities include retry logic for this.
+
+## Code Style
+
+Biome enforces: tabs for indentation, single quotes, semicolons required, 100 character line width.
