@@ -1,47 +1,30 @@
 <script setup lang="ts">
-import { RouterView, RouterLink, useRoute, useRouter } from 'vue-router';
+import { computed, watch } from 'vue';
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { ref, computed, watch } from 'vue';
-import { api } from '../api/client';
-
-interface Project {
-	id: string;
-	name: string;
-	slug: string;
-	platform: string;
-}
+import { useProjectsStore } from '../stores/projects';
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
-
-const projects = ref<Project[]>([]);
-const loading = ref(true);
+const projectsStore = useProjectsStore();
 
 const currentSlug = computed(() => route.params.slug as string | undefined);
-const currentProject = computed(() => projects.value.find((p) => p.slug === currentSlug.value));
-
-async function loadProjects() {
-	try {
-		const response = await api.get<{ projects: Project[] }>('/api/projects');
-		projects.value = response.projects;
-	} catch (err) {
-		console.error('Failed to load projects:', err);
-	} finally {
-		loading.value = false;
-	}
-}
+const currentProject = computed(() =>
+	projectsStore.projects.find((p) => p.slug === currentSlug.value),
+);
 
 async function logout() {
 	await authStore.logout();
+	projectsStore.reset();
 	router.push('/login');
 }
 
 watch(
 	() => authStore.isAuthenticated,
 	(isAuth) => {
-		if (isAuth) {
-			loadProjects();
+		if (isAuth && !projectsStore.initialized) {
+			projectsStore.loadProjects();
 		}
 	},
 	{ immediate: true },
@@ -73,10 +56,10 @@ watch(
 					</RouterLink>
 				</div>
 
-				<div v-if="loading" class="text-gray-400 text-sm">Loading...</div>
+				<div v-if="projectsStore.loading" class="text-gray-400 text-sm">Loading...</div>
 
 				<ul v-else class="space-y-1">
-					<li v-for="project in projects" :key="project.id">
+					<li v-for="project in projectsStore.projects" :key="project.id">
 						<RouterLink
 							:to="`/projects/${project.slug}/issues`"
 							class="flex items-center px-3 py-2 rounded-lg text-sm"
@@ -92,7 +75,7 @@ watch(
 				</ul>
 
 				<RouterLink
-					v-if="!loading && projects.length === 0"
+					v-if="!projectsStore.loading && projectsStore.projects.length === 0"
 					to="/projects/new"
 					class="block text-center py-8 text-gray-400 hover:text-white"
 				>

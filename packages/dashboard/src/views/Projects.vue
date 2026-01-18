@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { api } from '../api/client';
 
@@ -52,7 +52,7 @@ function formatDate(dateString: string): string {
 			<p class="mt-4 text-gray-500">Loading projects...</p>
 		</div>
 
-		<div v-else-if="error" class="bg-error-50 text-error-700 px-4 py-3 rounded-lg">
+		<div v-else-if="error" class="bg-error-50 dark:bg-error-900/20 text-error-700 dark:text-error-400 px-4 py-3 rounded-lg">
 			{{ error }}
 		</div>
 

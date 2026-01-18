@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import { useRoute, RouterLink } from 'vue-router';
+import { computed, onMounted, ref } from 'vue';
+import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
 
 const route = useRoute();
@@ -40,7 +40,7 @@ onMounted(() => loadEvent());
 		</div>
 
 		<!-- Error -->
-		<div v-else-if="error" class="bg-error-50 text-error-700 px-4 py-3 rounded-lg">
+		<div v-else-if="error" class="bg-error-50 dark:bg-error-900/20 text-error-700 dark:text-error-400 px-4 py-3 rounded-lg">
 			{{ error }}
 		</div>
 
@@ -63,7 +63,7 @@ onMounted(() => loadEvent());
 			</div>
 
 			<div class="card p-4">
-				<pre class="text-xs font-mono overflow-x-auto whitespace-pre-wrap">{{ JSON.stringify(event, null, 2) }}</pre>
+				<pre class="text-xs font-mono overflow-x-auto whitespace-pre-wrap text-gray-900 dark:text-gray-100">{{ JSON.stringify(event, null, 2) }}</pre>
 			</div>
 		</div>
 	</div>

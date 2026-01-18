@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
-import { useRoute, RouterLink } from 'vue-router';
+import { computed, onMounted, ref, watch } from 'vue';
+import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
+import { useProjectsStore } from '../stores/projects';
 
 interface Issue {
 	id: string;
@@ -21,7 +22,10 @@ interface Issue {
 }
 
 const route = useRoute();
+const projectsStore = useProjectsStore();
 const slug = computed(() => route.params.slug as string);
+const currentProject = computed(() => projectsStore.projects.find((p) => p.slug === slug.value));
+const isCloudflareWorkers = computed(() => currentProject.value?.platform === 'cloudflare-workers');
 
 const issues = ref<Issue[]>([]);
 const loading = ref(true);
@@ -29,6 +33,7 @@ const error = ref<string | null>(null);
 const statusFilter = ref<string>('unresolved');
 const hasMore = ref(false);
 const nextCursor = ref<string | undefined>();
+const dsn = ref<string>('');
 
 async function loadIssues(append = false) {
 	if (!append) {
@@ -58,10 +63,24 @@ async function loadIssues(append = false) {
 		}
 		hasMore.value = response.hasMore;
 		nextCursor.value = response.nextCursor;
+
+		// Load DSN if no issues (for quickstart display)
+		if (response.issues.length === 0 && !dsn.value) {
+			loadDsn();
+		}
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load issues';
 	} finally {
 		loading.value = false;
+	}
+}
+
+async function loadDsn() {
+	try {
+		const response = await api.get<{ dsn: string }>(`/api/projects/${slug.value}`);
+		dsn.value = response.dsn;
+	} catch {
+		// Ignore - DSN will just show placeholder
 	}
 }
 
@@ -123,24 +142,91 @@ watch(slug, () => loadIssues());
 		</div>
 
 		<!-- Error -->
-		<div v-else-if="error" class="bg-error-50 text-error-700 px-4 py-3 rounded-lg">
+		<div v-else-if="error" class="bg-error-50 dark:bg-error-900/20 text-error-700 dark:text-error-400 px-4 py-3 rounded-lg">
 			{{ error }}
 		</div>
 
-		<!-- Empty state -->
-		<div v-else-if="issues.length === 0" class="text-center py-12">
-			<svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-				/>
-			</svg>
-			<h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No issues</h3>
-			<p class="mt-1 text-sm text-gray-500">
-				No {{ statusFilter || '' }} issues found. That's great!
-			</p>
+		<!-- Empty state with quickstart -->
+		<div v-else-if="issues.length === 0" class="max-w-2xl mx-auto">
+			<div class="text-center py-8">
+				<svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+					/>
+				</svg>
+				<h3 class="mt-2 text-lg font-medium text-gray-900 dark:text-white">No issues yet</h3>
+				<p class="mt-1 text-sm text-gray-500">
+					Configure your SDK to start capturing errors.
+				</p>
+			</div>
+
+			<!-- Quickstart guide -->
+			<div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-6 mt-6">
+				<h3 class="font-medium text-gray-900 dark:text-white mb-4">
+					{{ isCloudflareWorkers ? 'Quick Setup (Cloudflare Workers)' : 'Quick Setup' }}
+				</h3>
+
+				<!-- Cloudflare Workers setup -->
+				<template v-if="isCloudflareWorkers">
+					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						1. Install the SDK:
+					</p>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto mb-4"><code>npm install @sentry/cloudflare --save</code></pre>
+
+					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						2. Add a service binding to Sentinel and the compatibility flag in <code class="text-xs bg-gray-200 dark:bg-gray-600 px-1 rounded">wrangler.jsonc</code>:
+					</p>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto mb-4"><code>{
+  "compatibility_flags": ["nodejs_als"],
+  "services": [
+    { "binding": "SENTINEL", "service": "workers-sentinel", "entrypoint": "SentinelRpc" }
+  ]
+}</code></pre>
+
+					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						3. Initialize Sentry with the RPC transport:
+					</p>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto"><code>import * as Sentry from "@sentry/cloudflare";
+import { waitUntil } from "cloudflare:workers";
+
+const DSN = "{{ dsn }}";
+
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: DSN,
+    transport: () => ({
+      send: async (envelope) => {
+        const rpcPromise = env.SENTINEL.captureEnvelope(DSN, envelope);
+        waitUntil(rpcPromise);
+        const result = await rpcPromise;
+        return { statusCode: result.status };
+      },
+      flush: async () => true,
+    }),
+  }),
+  {
+    async fetch(request, env, ctx) {
+      return new Response("Hello World!");
+    },
+  }
+);</code></pre>
+					<p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
+						Using a service binding with RPC routes requests internally within Cloudflare's network, avoiding external HTTP roundtrips and reducing latency.
+					</p>
+				</template>
+
+				<!-- Default JavaScript setup -->
+				<template v-else>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto"><code>import * as Sentry from '@sentry/browser';
+
+Sentry.init({
+  dsn: '{{ dsn }}',
+});</code></pre>
+				</template>
+			</div>
 		</div>
 
 		<!-- Issues list -->

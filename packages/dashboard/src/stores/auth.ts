@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { computed, ref } from 'vue';
 import { api } from '../api/client';
 
 export interface User {
@@ -52,7 +52,11 @@ export const useAuthStore = defineStore('auth', () => {
 		error.value = null;
 
 		try {
-			const response = await api.post<AuthResponse>('/api/auth/register', { email, password, name });
+			const response = await api.post<AuthResponse>('/api/auth/register', {
+				email,
+				password,
+				name,
+			});
 			user.value = response.user;
 			token.value = response.token;
 			localStorage.setItem('token', response.token);

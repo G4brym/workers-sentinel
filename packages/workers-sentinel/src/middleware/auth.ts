@@ -1,5 +1,5 @@
 import { createMiddleware } from 'hono/factory';
-import type { Env, AuthContext } from '../types';
+import type { AuthContext, Env } from '../types';
 
 type Variables = {
 	auth?: AuthContext;
@@ -12,7 +12,10 @@ export const authMiddleware = createMiddleware<{
 	const authHeader = c.req.header('Authorization');
 
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
-		return c.json({ error: 'unauthorized', message: 'Missing or invalid authorization header' }, 401);
+		return c.json(
+			{ error: 'unauthorized', message: 'Missing or invalid authorization header' },
+			401,
+		);
 	}
 
 	const token = authHeader.substring(7);

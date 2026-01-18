@@ -1,16 +1,19 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { authRoutes } from './routes/auth';
-import { ingestionRoutes } from './routes/ingestion';
-import { projectRoutes } from './routes/projects';
-import { issueRoutes } from './routes/issues';
-import { eventRoutes } from './routes/events';
 import { authMiddleware } from './middleware/auth';
-import type { Env, AuthContext } from './types';
+import { authRoutes } from './routes/auth';
+import { eventRoutes } from './routes/events';
+import { ingestionRoutes } from './routes/ingestion';
+import { issueRoutes } from './routes/issues';
+import { projectRoutes } from './routes/projects';
+import type { AuthContext, Env } from './types';
 
 // Re-export Durable Objects
 export { AuthState } from './durable-objects/auth-state';
 export { ProjectState } from './durable-objects/project-state';
+
+// Re-export RPC entrypoint for service bindings
+export { SentinelRpc } from './rpc';
 
 type Variables = {
 	auth?: AuthContext;
@@ -50,4 +53,6 @@ app.get('*', (c) => {
 	return c.env.ASSETS?.fetch(c.req.raw) ?? c.text('Dashboard not found', 404);
 });
 
-export default app;
+export function workersSentinel() {
+	return app
+}

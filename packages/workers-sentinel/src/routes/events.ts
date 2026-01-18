@@ -1,5 +1,5 @@
-import { Hono, Context } from 'hono';
-import type { Env, AuthContext, Project } from '../types';
+import { type Context, Hono } from 'hono';
+import type { AuthContext, Env, Project } from '../types';
 
 type Variables = {
 	auth?: AuthContext;

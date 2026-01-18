@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll } from 'vitest';
 import { SELF } from 'cloudflare:test';
-import { createTestUser, createTestProject, sendTestEvent, authFetch } from './utils';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { authFetch, createTestProject, createTestUser, sendTestEvent } from './utils';
 
 describe('Issues Routes', () => {
 	let testUser: Awaited<ReturnType<typeof createTestUser>>;
@@ -38,10 +38,15 @@ describe('Issues Routes', () => {
 
 	describe('GET /api/projects/:slug/issues', () => {
 		it('should list issues for a project', async () => {
-			const response = await authFetch(testUser.token!, `http://localhost/api/projects/${testProject.slug}/issues`);
+			const response = await authFetch(
+				testUser.token!,
+				`http://localhost/api/projects/${testProject.slug}/issues`,
+			);
 
 			expect(response.status).toBe(200);
-			const data = (await response.json()) as { issues: Array<{ id: string; title: string; count: number }> };
+			const data = (await response.json()) as {
+				issues: Array<{ id: string; title: string; count: number }>;
+			};
 
 			expect(data.issues).toBeDefined();
 			expect(Array.isArray(data.issues)).toBe(true);
@@ -77,7 +82,10 @@ describe('Issues Routes', () => {
 		});
 
 		it('should return 404 for non-existent project', async () => {
-			const response = await authFetch(testUser.token!, 'http://localhost/api/projects/non-existent-slug/issues');
+			const response = await authFetch(
+				testUser.token!,
+				'http://localhost/api/projects/non-existent-slug/issues',
+			);
 
 			expect(response.status).toBe(404);
 		});
@@ -106,7 +114,9 @@ describe('Issues Routes', () => {
 			);
 
 			expect(response.status).toBe(200);
-			const data = (await response.json()) as { issue: { id: string; title: string; count: number; status: string } };
+			const data = (await response.json()) as {
+				issue: { id: string; title: string; count: number; status: string };
+			};
 
 			expect(data.issue).toBeDefined();
 			expect(data.issue.id).toBe(issueId);
@@ -143,7 +153,10 @@ describe('Issues Routes', () => {
 			});
 
 			// Get the issue
-			const listResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues`);
+			const listResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
 			const listData = (await listResponse.json()) as { issues: Array<{ id: string }> };
 			const issueId = listData.issues[0].id;
 
@@ -183,14 +196,21 @@ describe('Issues Routes', () => {
 				exception: { type: 'Error', value: 'To be ignored' },
 			});
 
-			const listResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues`);
+			const listResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
 			const listData = (await listResponse.json()) as { issues: Array<{ id: string }> };
 			const issueId = listData.issues[0].id;
 
-			const response = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues/${issueId}`, {
-				method: 'PUT',
-				body: JSON.stringify({ status: 'ignored' }),
-			});
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/${issueId}`,
+				{
+					method: 'PUT',
+					body: JSON.stringify({ status: 'ignored' }),
+				},
+			);
 
 			expect(response.status).toBe(200);
 			const data = (await response.json()) as { issue: { status: string } };
@@ -212,14 +232,21 @@ describe('Issues Routes', () => {
 				exception: { type: 'Error', value: 'To be deleted' },
 			});
 
-			const listResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues`);
+			const listResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
 			const listData = (await listResponse.json()) as { issues: Array<{ id: string }> };
 			const issueId = listData.issues[0].id;
 
 			// Delete the issue
-			const response = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues/${issueId}`, {
-				method: 'DELETE',
-			});
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/${issueId}`,
+				{
+					method: 'DELETE',
+				},
+			);
 
 			expect(response.status).toBe(200);
 			const data = (await response.json()) as { success: boolean };

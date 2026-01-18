@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { Env, User, Session, Project } from '../types';
+import type { Env, Project, Session, User } from '../types';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -117,13 +117,19 @@ export class AuthState extends DurableObject<Env> {
 		};
 
 		if (!email || !password || !name) {
-			return this.jsonResponse({ error: 'missing_fields', message: 'Email, password, and name are required' }, 400);
+			return this.jsonResponse(
+				{ error: 'missing_fields', message: 'Email, password, and name are required' },
+				400,
+			);
 		}
 
 		// Check if user already exists
 		const existing = this.sql.exec('SELECT id FROM users WHERE email = ?', email).toArray();
 		if (existing.length > 0) {
-			return this.jsonResponse({ error: 'user_exists', message: 'User with this email already exists' }, 409);
+			return this.jsonResponse(
+				{ error: 'user_exists', message: 'User with this email already exists' },
+				409,
+			);
 		}
 
 		// Check if this is the first user (becomes admin)
@@ -171,7 +177,10 @@ export class AuthState extends DurableObject<Env> {
 		};
 
 		if (!email || !password) {
-			return this.jsonResponse({ error: 'missing_fields', message: 'Email and password are required' }, 400);
+			return this.jsonResponse(
+				{ error: 'missing_fields', message: 'Email and password are required' },
+				400,
+			);
 		}
 
 		// Find user
@@ -183,7 +192,10 @@ export class AuthState extends DurableObject<Env> {
 			.toArray();
 
 		if (userRows.length === 0) {
-			return this.jsonResponse({ error: 'invalid_credentials', message: 'Invalid email or password' }, 401);
+			return this.jsonResponse(
+				{ error: 'invalid_credentials', message: 'Invalid email or password' },
+				401,
+			);
 		}
 
 		const userRow = userRows[0];
@@ -191,7 +203,10 @@ export class AuthState extends DurableObject<Env> {
 		// Verify password
 		const valid = await this.verifyPassword(password, userRow.password_hash as string);
 		if (!valid) {
-			return this.jsonResponse({ error: 'invalid_credentials', message: 'Invalid email or password' }, 401);
+			return this.jsonResponse(
+				{ error: 'invalid_credentials', message: 'Invalid email or password' },
+				401,
+			);
 		}
 
 		// Create session
@@ -285,7 +300,10 @@ export class AuthState extends DurableObject<Env> {
 		};
 
 		if (!name || !userId) {
-			return this.jsonResponse({ error: 'missing_fields', message: 'Name and userId are required' }, 400);
+			return this.jsonResponse(
+				{ error: 'missing_fields', message: 'Name and userId are required' },
+				400,
+			);
 		}
 
 		// Generate unique slug
@@ -459,11 +477,18 @@ export class AuthState extends DurableObject<Env> {
 
 		// Check if user is owner
 		const memberRows = this.sql
-			.exec('SELECT role FROM project_members WHERE project_id = ? AND user_id = ?', projectId, userId)
+			.exec(
+				'SELECT role FROM project_members WHERE project_id = ? AND user_id = ?',
+				projectId,
+				userId,
+			)
 			.toArray();
 
 		if (memberRows.length === 0 || memberRows[0].role !== 'owner') {
-			return this.jsonResponse({ error: 'forbidden', message: 'Only project owner can delete' }, 403);
+			return this.jsonResponse(
+				{ error: 'forbidden', message: 'Only project owner can delete' },
+				403,
+			);
 		}
 
 		// Delete project (cascade deletes members)
@@ -480,7 +505,11 @@ export class AuthState extends DurableObject<Env> {
 		}
 
 		const memberRows = this.sql
-			.exec('SELECT role FROM project_members WHERE project_id = ? AND user_id = ?', projectId, userId)
+			.exec(
+				'SELECT role FROM project_members WHERE project_id = ? AND user_id = ?',
+				projectId,
+				userId,
+			)
 			.toArray();
 
 		const member = memberRows.length > 0 ? memberRows[0] : null;

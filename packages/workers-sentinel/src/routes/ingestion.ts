@@ -1,11 +1,11 @@
-import { Hono, Context } from 'hono';
-import type { Env, Project } from '../types';
+import { type Context, Hono } from 'hono';
 import {
-	parseEnvelope,
-	extractKeyFromAuthHeader,
 	extractEvents,
+	extractKeyFromAuthHeader,
 	maybeDecompress,
+	parseEnvelope,
 } from '../lib/envelope-parser';
+import type { Env, Project } from '../types';
 
 export const ingestionRoutes = new Hono<{ Bindings: Env }>();
 

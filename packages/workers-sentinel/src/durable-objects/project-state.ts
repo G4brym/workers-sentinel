@@ -1,6 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { Env, SentryEvent, Issue } from '../types';
-import { generateFingerprint, extractTitle, extractCulprit, extractMetadata } from '../lib/fingerprint';
+import {
+	extractCulprit,
+	extractMetadata,
+	extractTitle,
+	generateFingerprint,
+} from '../lib/fingerprint';
+import type { Env, Issue, SentryEvent } from '../types';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS issues (
@@ -131,7 +136,9 @@ export class ProjectState extends DurableObject<Env> {
 		const fingerprint = generateFingerprint(event);
 
 		// Check for existing issue
-		const existingRows = this.sql.exec('SELECT id, count FROM issues WHERE fingerprint = ?', fingerprint).toArray();
+		const existingRows = this.sql
+			.exec('SELECT id, count FROM issues WHERE fingerprint = ?', fingerprint)
+			.toArray();
 		const existingIssue = existingRows.length > 0 ? existingRows[0] : null;
 
 		let issueId: string;
@@ -139,7 +146,11 @@ export class ProjectState extends DurableObject<Env> {
 		if (existingIssue) {
 			// Update existing issue
 			issueId = existingIssue.id as string;
-			this.sql.exec('UPDATE issues SET last_seen = ?, count = count + 1 WHERE id = ?', now, issueId);
+			this.sql.exec(
+				'UPDATE issues SET last_seen = ?, count = count + 1 WHERE id = ?',
+				now,
+				issueId,
+			);
 		} else {
 			// Create new issue
 			issueId = crypto.randomUUID();
@@ -197,7 +208,11 @@ export class ProjectState extends DurableObject<Env> {
 			const userHash = await this.hashUserIdentifier(event.user);
 			if (userHash) {
 				const existingUser = this.sql
-					.exec('SELECT issue_id FROM issue_users WHERE issue_id = ? AND user_hash = ?', issueId, userHash)
+					.exec(
+						'SELECT issue_id FROM issue_users WHERE issue_id = ? AND user_hash = ?',
+						issueId,
+						userHash,
+					)
 					.one();
 
 				if (existingUser) {
@@ -268,7 +283,10 @@ export class ProjectState extends DurableObject<Env> {
 		const hasMore = rows.length > pageLimit;
 		const issues = rows.slice(0, pageLimit).map((row) => this.rowToIssue(row));
 
-		const nextCursor = hasMore && issues.length > 0 ? (issues[issues.length - 1] as Issue)[sortField as keyof Issue] : undefined;
+		const nextCursor =
+			hasMore && issues.length > 0
+				? (issues[issues.length - 1] as Issue)[sortField as keyof Issue]
+				: undefined;
 
 		return this.jsonResponse({
 			issues,
@@ -290,7 +308,10 @@ export class ProjectState extends DurableObject<Env> {
 
 		// Get recent stats (7 days of hourly buckets)
 		const statsRows = this.sql
-			.exec('SELECT bucket, count FROM issue_stats WHERE issue_id = ? ORDER BY bucket DESC LIMIT 168', issueId)
+			.exec(
+				'SELECT bucket, count FROM issue_stats WHERE issue_id = ? ORDER BY bucket DESC LIMIT 168',
+				issueId,
+			)
 			.toArray();
 
 		const stats = statsRows.map((s) => ({
@@ -371,7 +392,9 @@ export class ProjectState extends DurableObject<Env> {
 		const events = rows.slice(0, pageLimit).map((row) => JSON.parse(row.data as string));
 
 		const nextCursor =
-			hasMore && events.length > 0 ? (events[events.length - 1] as SentryEvent).timestamp : undefined;
+			hasMore && events.length > 0
+				? (events[events.length - 1] as SentryEvent).timestamp
+				: undefined;
 
 		return this.jsonResponse({
 			events,
@@ -401,7 +424,9 @@ export class ProjectState extends DurableObject<Env> {
 
 		const pageLimit = Math.min(limit || 25, 100);
 
-		const rows = this.sql.exec('SELECT * FROM events ORDER BY timestamp DESC LIMIT ?', pageLimit).toArray();
+		const rows = this.sql
+			.exec('SELECT * FROM events ORDER BY timestamp DESC LIMIT ?', pageLimit)
+			.toArray();
 
 		const events = rows.map((row) => ({
 			...JSON.parse(row.data as string),
@@ -421,7 +446,10 @@ export class ProjectState extends DurableObject<Env> {
 		const endDate = end ? new Date(end) : new Date();
 		const startDate = start
 			? new Date(start)
-			: new Date(endDate.getTime() - (interval === '1w' ? 7 : interval === '1d' ? 1 : 1) * 24 * 60 * 60 * 1000);
+			: new Date(
+					endDate.getTime() -
+						(interval === '1w' ? 7 : interval === '1d' ? 1 : 1) * 24 * 60 * 60 * 1000,
+				);
 
 		// Aggregate stats by bucket
 		const rows = this.sql
@@ -452,9 +480,7 @@ export class ProjectState extends DurableObject<Env> {
 		return date.toISOString();
 	}
 
-	private async hashUserIdentifier(
-		user: SentryEvent['user'],
-	): Promise<string | null> {
+	private async hashUserIdentifier(user: SentryEvent['user']): Promise<string | null> {
 		if (!user) return null;
 
 		const identifier = user.id || user.email || user.ip_address || user.username;

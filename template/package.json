@@ -1,0 +1,17 @@
+{
+	"name": "workers-sentinel",
+	"version": "1.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev"
+	},
+	"dependencies": {
+		"workers-sentinel": "file:../packages/workers-sentinel"
+	},
+	"devDependencies": {
+		"typescript": "5.9.3",
+		"wrangler": "^4.53.0"
+	}
+}

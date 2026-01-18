@@ -1,4 +1,4 @@
-import type { SentryEvent, IssueMetadata, Stacktrace, StackFrame } from '../types';
+import type { IssueMetadata, SentryEvent, StackFrame, Stacktrace } from '../types';
 
 /**
  * Generate a fingerprint for grouping events into issues.

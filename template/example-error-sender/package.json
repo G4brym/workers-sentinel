@@ -1,0 +1,20 @@
+{
+	"name": "test-error-worker",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20260118.0",
+		"typescript": "^5.5.2",
+		"wrangler": "^4.59.2"
+	},
+	"dependencies": {
+		"@sentry/cloudflare": "^10.34.0"
+	}
+}

@@ -1,4 +1,4 @@
-import type { ParsedEnvelope, EnvelopeHeader, EnvelopeItem, SentryEvent } from '../types';
+import type { EnvelopeHeader, EnvelopeItem, ParsedEnvelope, SentryEvent } from '../types';
 
 /**
  * Parse a Sentry envelope.
@@ -166,7 +166,10 @@ export function extractEvents(envelope: ParsedEnvelope): SentryEvent[] {
 /**
  * Decompress gzip-encoded body if necessary.
  */
-export async function maybeDecompress(body: ArrayBuffer, contentEncoding: string | null): Promise<string> {
+export async function maybeDecompress(
+	body: ArrayBuffer,
+	contentEncoding: string | null,
+): Promise<string> {
 	if (contentEncoding === 'gzip') {
 		const ds = new DecompressionStream('gzip');
 		const decompressed = new Response(body).body!.pipeThrough(ds);

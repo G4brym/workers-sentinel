@@ -1,0 +1,41 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "workers-sentinel",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-01-18",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	"build": {
+		"command": "cd ../dashboard && npm run build"
+	},
+	// Durable Object bindings
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "AUTH_STATE",
+				"class_name": "AuthState"
+			},
+			{
+				"name": "PROJECT_STATE",
+				"class_name": "ProjectState"
+			}
+		]
+	},
+	// Migrations for SQLite-backed Durable Objects
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["AuthState", "ProjectState"]
+		}
+	],
+	// Serve dashboard static assets
+	"assets": {
+		"directory": "../dashboard/dist",
+		"binding": "ASSETS",
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": ["/api/*", "/docs", "/openapi.json"]
+	}
+}

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api/client';
+import { useProjectsStore } from '../stores/projects';
 
 interface Project {
 	id: string;
@@ -14,6 +15,7 @@ interface Project {
 
 const route = useRoute();
 const router = useRouter();
+const projectsStore = useProjectsStore();
 const slug = computed(() => route.params.slug as string);
 
 const project = ref<Project | null>(null);
@@ -28,7 +30,9 @@ async function loadProject() {
 	error.value = null;
 
 	try {
-		const response = await api.get<{ project: Project; dsn: string }>(`/api/projects/${slug.value}`);
+		const response = await api.get<{ project: Project; dsn: string }>(
+			`/api/projects/${slug.value}`,
+		);
 		project.value = response.project;
 		dsn.value = response.dsn;
 	} catch (err) {
@@ -44,6 +48,8 @@ async function deleteProject() {
 	deleting.value = true;
 	try {
 		await api.delete(`/api/projects/${slug.value}`);
+		// Remove project from store so sidebar updates
+		projectsStore.removeProject(slug.value);
 		router.push('/projects');
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to delete project';
@@ -76,7 +82,7 @@ onMounted(() => loadProject());
 		</div>
 
 		<!-- Error -->
-		<div v-else-if="error" class="bg-error-50 text-error-700 px-4 py-3 rounded-lg">
+		<div v-else-if="error" class="bg-error-50 dark:bg-error-900/20 text-error-700 dark:text-error-400 px-4 py-3 rounded-lg">
 			{{ error }}
 		</div>
 
@@ -92,7 +98,7 @@ onMounted(() => loadProject());
 				</p>
 
 				<div class="flex items-center space-x-2">
-					<code class="flex-1 bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-lg text-sm font-mono break-all">
+					<code class="flex-1 bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-lg text-sm font-mono break-all text-gray-900 dark:text-gray-100">
 						{{ dsn }}
 					</code>
 					<button @click="copyDsn" class="btn btn-secondary" title="Copy to clipboard">

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll } from 'vitest';
 import { SELF } from 'cloudflare:test';
-import { createTestUser, createTestProject, authFetch } from './utils';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { authFetch, createTestProject, createTestUser } from './utils';
 
 describe('Project Routes', () => {
 	let testUser: Awaited<ReturnType<typeof createTestUser>>;
@@ -131,10 +131,16 @@ describe('Project Routes', () => {
 
 			const project = await createTestProject(user.token!, { name: 'Get Me Project' });
 
-			const response = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}`);
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+			);
 
 			expect(response.status).toBe(200);
-			const data = (await response.json()) as { project: { id: string; name: string }; dsn: string };
+			const data = (await response.json()) as {
+				project: { id: string; name: string };
+				dsn: string;
+			};
 
 			expect(data.project).toBeDefined();
 			expect(data.project.id).toBe(project.id);
@@ -143,7 +149,10 @@ describe('Project Routes', () => {
 		});
 
 		it('should return 404 for non-existent project', async () => {
-			const response = await authFetch(testUser.token!, 'http://localhost/api/projects/non-existent-slug');
+			const response = await authFetch(
+				testUser.token!,
+				'http://localhost/api/projects/non-existent-slug',
+			);
 
 			expect(response.status).toBe(404);
 		});
@@ -164,7 +173,10 @@ describe('Project Routes', () => {
 			const project = await createTestProject(user1.token!, { name: 'User 1 Project' });
 
 			// User 2 tries to access User 1's project
-			const response = await authFetch(user2.token!, `http://localhost/api/projects/${project.slug}`);
+			const response = await authFetch(
+				user2.token!,
+				`http://localhost/api/projects/${project.slug}`,
+			);
 
 			expect(response.status).toBe(404);
 		});
@@ -180,23 +192,34 @@ describe('Project Routes', () => {
 
 			const project = await createTestProject(user.token!, { name: 'Delete Me Project' });
 
-			const response = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}`, {
-				method: 'DELETE',
-			});
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'DELETE',
+				},
+			);
 
 			expect(response.status).toBe(200);
 			const data = (await response.json()) as { success: boolean };
 			expect(data.success).toBe(true);
 
 			// Verify project is deleted
-			const getResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}`);
+			const getResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+			);
 			expect(getResponse.status).toBe(404);
 		});
 
 		it('should return 404 for non-existent project', async () => {
-			const response = await authFetch(testUser.token!, 'http://localhost/api/projects/non-existent-slug', {
-				method: 'DELETE',
-			});
+			const response = await authFetch(
+				testUser.token!,
+				'http://localhost/api/projects/non-existent-slug',
+				{
+					method: 'DELETE',
+				},
+			);
 
 			expect(response.status).toBe(404);
 		});

@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api/client';
+import { useProjectsStore } from '../stores/projects';
 
 const router = useRouter();
+const projectsStore = useProjectsStore();
 
 const name = ref('');
-const platform = ref('javascript');
+const platform = ref('cloudflare-workers');
+const selectedPlatformAtCreation = ref('cloudflare-workers');
 const loading = ref(false);
 const error = ref<string | null>(null);
 const createdProject = ref<{
@@ -15,6 +18,7 @@ const createdProject = ref<{
 } | null>(null);
 
 const platforms = [
+	{ value: 'cloudflare-workers', label: 'Cloudflare Workers' },
 	{ value: 'javascript', label: 'JavaScript' },
 	{ value: 'node', label: 'Node.js' },
 	{ value: 'python', label: 'Python' },
@@ -31,20 +35,35 @@ async function handleSubmit() {
 	error.value = null;
 
 	try {
+		selectedPlatformAtCreation.value = platform.value;
 		const response = await api.post<{
-			project: { name: string; slug: string };
+			project: { id: string; name: string; slug: string };
 			dsn: string;
 		}>('/api/projects', {
 			name: name.value,
 			platform: platform.value,
 		});
 		createdProject.value = response;
+		// Add project to store so sidebar updates
+		projectsStore.addProject({
+			id: response.project.id,
+			name: response.project.name,
+			slug: response.project.slug,
+			platform: platform.value,
+		});
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to create project';
 	} finally {
 		loading.value = false;
 	}
 }
+
+const quickSetupTitle = computed(() => {
+	if (selectedPlatformAtCreation.value === 'cloudflare-workers') {
+		return 'Quick Setup (Cloudflare Workers)';
+	}
+	return 'Quick Setup (JavaScript)';
+});
 
 function copyDsn() {
 	if (createdProject.value) {
@@ -78,7 +97,7 @@ function goToProject() {
 			<div class="mb-6">
 				<label class="label">Your DSN</label>
 				<div class="flex items-center space-x-2">
-					<code class="flex-1 bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-lg text-sm font-mono break-all">
+					<code class="flex-1 bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-lg text-sm font-mono break-all text-gray-900 dark:text-gray-100">
 						{{ createdProject.dsn }}
 					</code>
 					<button @click="copyDsn" class="btn btn-secondary" title="Copy to clipboard">
@@ -98,12 +117,65 @@ function goToProject() {
 			</div>
 
 			<div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 mb-6">
-				<h3 class="font-medium text-gray-900 dark:text-white mb-2">Quick Setup (JavaScript)</h3>
-				<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto"><code>import * as Sentry from '@sentry/browser';
+				<h3 class="font-medium text-gray-900 dark:text-white mb-2">{{ quickSetupTitle }}</h3>
+
+				<!-- Cloudflare Workers setup -->
+				<template v-if="selectedPlatformAtCreation === 'cloudflare-workers'">
+					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						1. Install the SDK:
+					</p>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto mb-4"><code>npm install @sentry/cloudflare --save</code></pre>
+
+					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						2. Add a service binding to Sentinel and the compatibility flag in <code class="text-xs bg-gray-200 dark:bg-gray-600 px-1 rounded">wrangler.jsonc</code>:
+					</p>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto mb-4"><code>{
+  "compatibility_flags": ["nodejs_als"],
+  "services": [
+    { "binding": "SENTINEL", "service": "workers-sentinel", "entrypoint": "SentinelRpc" }
+  ]
+}</code></pre>
+
+					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+						3. Initialize Sentry with the RPC transport:
+					</p>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto"><code>import * as Sentry from "@sentry/cloudflare";
+import { waitUntil } from "cloudflare:workers";
+
+const DSN = "{{ createdProject.dsn }}";
+
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: DSN,
+    transport: () => ({
+      send: async (envelope) => {
+        const rpcPromise = env.SENTINEL.captureEnvelope(DSN, envelope);
+        waitUntil(rpcPromise);
+        const result = await rpcPromise;
+        return { statusCode: result.status };
+      },
+      flush: async () => true,
+    }),
+  }),
+  {
+    async fetch(request, env, ctx) {
+      return new Response("Hello World!");
+    },
+  }
+);</code></pre>
+					<p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
+						Using a service binding with RPC routes requests internally within Cloudflare's network, avoiding external HTTP roundtrips and reducing latency.
+					</p>
+				</template>
+
+				<!-- Default JavaScript setup -->
+				<template v-else>
+					<pre class="text-sm bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto"><code>import * as Sentry from '@sentry/browser';
 
 Sentry.init({
   dsn: '{{ createdProject.dsn }}',
 });</code></pre>
+				</template>
 			</div>
 
 			<button @click="goToProject" class="btn btn-primary w-full">

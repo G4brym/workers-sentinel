@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeAll } from 'vitest';
 import { SELF } from 'cloudflare:test';
-import { createTestUser, createTestProject, createTestEnvelope, sendTestEvent, authFetch } from './utils';
+import { beforeAll, describe, expect, it } from 'vitest';
+import {
+	authFetch,
+	createTestEnvelope,
+	createTestProject,
+	createTestUser,
+	sendTestEvent,
+} from './utils';
 
 describe('Ingestion Routes', () => {
 	let testUser: Awaited<ReturnType<typeof createTestUser>>;
@@ -101,8 +107,13 @@ describe('Ingestion Routes', () => {
 			expect(result.id).toBeDefined();
 
 			// Verify issue was created
-			const issuesResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues`);
-			const issuesData = (await issuesResponse.json()) as { issues: Array<{ title: string; count: number }> };
+			const issuesResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
+			const issuesData = (await issuesResponse.json()) as {
+				issues: Array<{ title: string; count: number }>;
+			};
 
 			expect(issuesData.issues.length).toBeGreaterThan(0);
 			expect(issuesData.issues[0].title).toContain('TypeError');
@@ -131,8 +142,13 @@ describe('Ingestion Routes', () => {
 			await sendTestEvent(project.id, project.publicKey, errorConfig);
 
 			// Check that only one issue exists with count > 1
-			const issuesResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues`);
-			const issuesData = (await issuesResponse.json()) as { issues: Array<{ title: string; count: number }> };
+			const issuesResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
+			const issuesData = (await issuesResponse.json()) as {
+				issues: Array<{ title: string; count: number }>;
+			};
 
 			const referenceErrors = issuesData.issues.filter((i) => i.title.includes('ReferenceError'));
 			expect(referenceErrors.length).toBe(1);
@@ -175,7 +191,10 @@ describe('Ingestion Routes', () => {
 			});
 
 			// Verify the event was stored with metadata
-			const issuesResponse = await authFetch(user.token!, `http://localhost/api/projects/${project.slug}/issues`);
+			const issuesResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
 			const issuesData = (await issuesResponse.json()) as { issues: Array<{ id: string }> };
 
 			expect(issuesData.issues.length).toBeGreaterThan(0);

@@ -210,7 +210,11 @@ export function createTestEnvelope(
 		};
 	}
 
-	return [JSON.stringify(envelopeHeader), JSON.stringify(itemHeader), JSON.stringify(eventPayload)].join('\n');
+	return [
+		JSON.stringify(envelopeHeader),
+		JSON.stringify(itemHeader),
+		JSON.stringify(eventPayload),
+	].join('\n');
 }
 
 /**

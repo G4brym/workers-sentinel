@@ -8,7 +8,10 @@ authRoutes.post('/register', async (c) => {
 	const body = await c.req.json<{ email: string; password: string; name: string }>();
 
 	if (!body.email || !body.password || !body.name) {
-		return c.json({ error: 'missing_fields', message: 'Email, password, and name are required' }, 400);
+		return c.json(
+			{ error: 'missing_fields', message: 'Email, password, and name are required' },
+			400,
+		);
 	}
 
 	const authStateId = c.env.AUTH_STATE.idFromName('global');

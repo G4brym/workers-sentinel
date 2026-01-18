@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import { useRoute, RouterLink } from 'vue-router';
+import { computed, onMounted, ref } from 'vue';
+import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
 
 interface Issue {
@@ -80,7 +80,9 @@ async function loadIssue() {
 	try {
 		const [issueResponse, eventsResponse] = await Promise.all([
 			api.get<{ issue: Issue }>(`/api/projects/${slug.value}/issues/${issueId.value}`),
-			api.get<{ events: Event[] }>(`/api/projects/${slug.value}/issues/${issueId.value}/events?limit=10`),
+			api.get<{ events: Event[] }>(
+				`/api/projects/${slug.value}/issues/${issueId.value}/events?limit=10`,
+			),
 		]);
 
 		issue.value = issueResponse.issue;
@@ -145,7 +147,7 @@ onMounted(() => loadIssue());
 		</div>
 
 		<!-- Error -->
-		<div v-else-if="error" class="bg-error-50 text-error-700 px-4 py-3 rounded-lg">
+		<div v-else-if="error" class="bg-error-50 dark:bg-error-900/20 text-error-700 dark:text-error-400 px-4 py-3 rounded-lg">
 			{{ error }}
 		</div>
 
