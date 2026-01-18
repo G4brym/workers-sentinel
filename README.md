@@ -23,6 +23,8 @@
 
 # Workers Sentinel
 
+> **⚠️ Disclaimer:** This is a toy project and a very poor imitation of Sentry. It doesn't even represent 0.1% of all Sentry features. This should not be taken seriously or used in any production environment where you actually care about error tracking. Please use the real [Sentry](https://sentry.io) for production workloads.
+
 Workers Sentinel is a lightweight, self-hosted error tracking and monitoring solution that runs entirely on your Cloudflare account. It accepts events using the Sentry SDK wire format, allowing you to use existing Sentry SDKs by simply changing the DSN endpoint. All your error data is stored securely in SQLite-backed Durable Objects, giving you full control over your information.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/G4brym/workers-sentinel/tree/main/template)
