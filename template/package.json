@@ -8,7 +8,7 @@
 		"start": "wrangler dev"
 	},
 	"dependencies": {
-		"workers-sentinel": "file:../packages/workers-sentinel"
+		"workers-sentinel": "^0.1.0"
 	},
 	"devDependencies": {
 		"typescript": "5.9.3",
