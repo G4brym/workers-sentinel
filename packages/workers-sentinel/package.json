@@ -1,17 +1,18 @@
 {
 	"name": "workers-sentinel",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "A self-hosted, Sentry-compatible error tracking system running on Cloudflare Workers",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
+		"dashboard",
 		"dist",
 		"LICENSE"
 	],
 	"scripts": {
 		"dev": "wrangler dev",
-		"build": "cd ../dashboard && npm run build && cp -r ../dashboard/dist dist/dashboard",
+		"build": "rm -rf dist/ && rm -rf dashboard/ && tsup src/index.ts --format esm --external cloudflare:workers --dts && cd ../dashboard && npm run build && cp -r dist ../workers-sentinel/dashboard",
 		"build:types": "tsc -p tsconfig.build.json",
 		"prepublishOnly": "pnpm build:types",
 		"deploy": "wrangler deploy",
@@ -42,7 +43,8 @@
 	},
 	"homepage": "https://github.com/G4brym/workers-sentinel#readme",
 	"dependencies": {
-		"hono": "^4.6.14"
+		"hono": "^4.6.14",
+		"tsup": "^8.5.1"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.12.4",

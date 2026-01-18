@@ -34,7 +34,7 @@
 	],
 	// Serve dashboard static assets
 	"assets": {
-		"directory": "node_modules/workers-sentinel/dist/dashboard",
+		"directory": "node_modules/workers-sentinel/dashboard",
 		"binding": "ASSETS",
 		"html_handling": "auto-trailing-slash",
 		"not_found_handling": "single-page-application",
