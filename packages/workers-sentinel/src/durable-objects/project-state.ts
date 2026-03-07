@@ -239,6 +239,15 @@ export class ProjectState extends DurableObject<Env> {
 		return this.jsonResponse({ eventId, issueId });
 	}
 
+	private static readonly VALID_SORT_FIELDS = [
+		'last_seen',
+		'first_seen',
+		'count',
+		'user_count',
+		'level',
+		'title',
+	];
+
 	private async handleGetIssues(request: Request): Promise<Response> {
 		const { status, level, query, sort, cursor, limit } = (await request.json()) as {
 			status?: string;
@@ -250,7 +259,7 @@ export class ProjectState extends DurableObject<Env> {
 		};
 
 		const pageLimit = Math.min(limit || 25, 100);
-		const sortField = sort || 'last_seen';
+		const sortField = sort && ProjectState.VALID_SORT_FIELDS.includes(sort) ? sort : 'last_seen';
 		const sortOrder = 'DESC';
 
 		let sql = 'SELECT * FROM issues WHERE 1=1';
