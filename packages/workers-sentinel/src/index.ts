@@ -8,6 +8,7 @@ import { ingestionRoutes } from './routes/ingestion';
 import { issueRoutes } from './routes/issues';
 import { memberRoutes } from './routes/members';
 import { projectRoutes } from './routes/projects';
+import { releaseRoutes } from './routes/releases';
 import type { AuthContext, Env } from './types';
 
 // Re-export Durable Objects
@@ -54,6 +55,7 @@ app.route('/api/projects', projectRoutes);
 app.route('/api/projects', memberRoutes);
 app.route('/api/projects', issueRoutes);
 app.route('/api/projects', eventRoutes);
+app.route('/api/projects', releaseRoutes);
 
 // Admin routes (session auth required)
 app.use('/api/admin/*', authMiddleware);

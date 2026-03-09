@@ -60,6 +60,16 @@ const router = createRouter({
 					component: () => import('../views/EventDetail.vue'),
 				},
 				{
+					path: 'projects/:slug/releases',
+					name: 'releases',
+					component: () => import('../views/Releases.vue'),
+				},
+				{
+					path: 'projects/:slug/releases/:version',
+					name: 'release-detail',
+					component: () => import('../views/ReleaseDetail.vue'),
+				},
+				{
 					path: 'projects/:slug/settings',
 					name: 'project-settings',
 					component: () => import('../views/ProjectSettings.vue'),
