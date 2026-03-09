@@ -7,6 +7,8 @@ import {
 } from '../lib/fingerprint';
 import type { Env, Issue, ProjectSettings, SentryEvent } from '../types';
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS issues (
   id TEXT PRIMARY KEY,
@@ -115,7 +117,7 @@ export class ProjectState extends DurableObject<Env> {
 		if (!alarm) {
 			const retentionDays = this.getRetentionDays();
 			if (retentionDays > 0) {
-				this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+				this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 			}
 		}
 	}
@@ -823,7 +825,7 @@ export class ProjectState extends DurableObject<Env> {
 		if (retentionDays <= 0) return;
 
 		const cutoffDate = new Date(
-			Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+			Date.now() - retentionDays * MS_PER_DAY,
 		).toISOString();
 
 		// Delete old events
@@ -832,6 +834,9 @@ export class ProjectState extends DurableObject<Env> {
 		// Delete old issue_stats buckets
 		this.sql.exec('DELETE FROM issue_stats WHERE bucket < ?', cutoffDate);
 
+		// Clean up issue_users whose last activity is before the cutoff
+		this.sql.exec('DELETE FROM issue_users WHERE last_seen < ?', cutoffDate);
+
 		// Recalculate issue counts from remaining events
 		this.sql.exec(`
 			UPDATE issues SET count = (
@@ -839,7 +844,7 @@ export class ProjectState extends DurableObject<Env> {
 			)
 		`);
 
-		// Recalculate user counts
+		// Recalculate user counts from remaining issue_users
 		this.sql.exec(`
 			UPDATE issues SET user_count = (
 				SELECT COUNT(*) FROM issue_users WHERE issue_users.issue_id = issues.id
@@ -855,7 +860,7 @@ export class ProjectState extends DurableObject<Env> {
 		);
 
 		// Reschedule alarm for tomorrow
-		this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+		this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 	}
 
 	private getRetentionDays(): number {
@@ -873,9 +878,9 @@ export class ProjectState extends DurableObject<Env> {
 	private async handleUpdateSettings(request: Request): Promise<Response> {
 		const { retentionDays } = (await request.json()) as ProjectSettings;
 
-		if (typeof retentionDays !== 'number' || retentionDays < 0) {
+		if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
 			return this.jsonResponse(
-				{ error: 'invalid_retention_days', message: 'retentionDays must be 0 or a positive number' },
+				{ error: 'invalid_retention_days', message: 'retentionDays must be 0 or a positive integer' },
 				400,
 			);
 		}
@@ -887,7 +892,7 @@ export class ProjectState extends DurableObject<Env> {
 
 		if (retentionDays > 0) {
 			// Schedule alarm for cleanup (24 hours from now)
-			this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+			this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 		} else {
 			// Disable retention — cancel any pending alarm
 			this.ctx.storage.deleteAlarm();
