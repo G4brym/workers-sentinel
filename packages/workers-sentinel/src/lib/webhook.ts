@@ -53,7 +53,10 @@ export async function sendWebhook(url: string, payload: WebhookPayload): Promise
 			body: JSON.stringify(payload),
 		});
 		if (!response.ok) {
-			console.error(`Webhook delivery failed: ${response.status} ${response.statusText}`);
+			const body = await response.text();
+			console.error(`Webhook delivery failed: ${response.status} ${response.statusText} - ${body}`);
+		} else {
+			await response.body?.cancel();
 		}
 	} catch (error) {
 		console.error('Webhook delivery error:', error);

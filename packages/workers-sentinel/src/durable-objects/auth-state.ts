@@ -544,6 +544,24 @@ export class AuthState extends DurableObject<Env> {
 			);
 		}
 
+		// Validate webhook URL
+		if (webhookUrl) {
+			try {
+				const parsed = new URL(webhookUrl);
+				if (parsed.protocol !== 'https:') {
+					return this.jsonResponse(
+						{ error: 'invalid_url', message: 'Webhook URL must use HTTPS' },
+						400,
+					);
+				}
+			} catch {
+				return this.jsonResponse(
+					{ error: 'invalid_url', message: 'Invalid webhook URL' },
+					400,
+				);
+			}
+		}
+
 		const updates: string[] = [];
 		const params: (string | null)[] = [];
 

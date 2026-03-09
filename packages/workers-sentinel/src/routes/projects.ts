@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { buildWebhookPayload } from '../lib/webhook';
 import type { AuthContext, Env } from '../types';
 
 type Variables = {
@@ -63,7 +65,7 @@ projectRoutes.post('/', async (c) => {
 	const host = new URL(c.req.url).host;
 	const dsn = `https://${data.project.publicKey}@${host}/${data.project.id}`;
 
-	return c.json({ ...data, dsn }, response.status as 200 | 400);
+	return c.json({ ...data, dsn }, response.status as ContentfulStatusCode);
 });
 
 // Get a specific project by slug
@@ -88,7 +90,7 @@ projectRoutes.get('/:slug', async (c) => {
 
 	if (!response.ok) {
 		const error = await response.json();
-		return c.json(error, response.status as 404);
+		return c.json(error, response.status as ContentfulStatusCode);
 	}
 
 	const data = (await response.json()) as { project: { id: string; publicKey: string } };
@@ -124,7 +126,7 @@ projectRoutes.patch('/:slug', async (c) => {
 
 	if (!getResponse.ok) {
 		const error = await getResponse.json();
-		return c.json(error, getResponse.status as 404);
+		return c.json(error, getResponse.status as ContentfulStatusCode);
 	}
 
 	const projectData = (await getResponse.json()) as { project: { id: string } };
@@ -143,7 +145,68 @@ projectRoutes.patch('/:slug', async (c) => {
 	);
 
 	const data = await updateResponse.json();
-	return c.json(data, updateResponse.status as 200 | 400 | 403);
+	return c.json(data, updateResponse.status as ContentfulStatusCode);
+});
+
+// Test webhook
+projectRoutes.post('/:slug/test-webhook', async (c) => {
+	const auth = c.get('auth');
+	if (!auth) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+
+	const slug = c.req.param('slug');
+
+	const authStateId = c.env.AUTH_STATE.idFromName('global');
+	const authState = c.env.AUTH_STATE.get(authStateId);
+
+	const getResponse = await authState.fetch(
+		new Request('http://internal/get-project', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ slug, userId: auth.user.id }),
+		}),
+	);
+
+	if (!getResponse.ok) {
+		const error = await getResponse.json();
+		return c.json(error, getResponse.status as ContentfulStatusCode);
+	}
+
+	const projectData = (await getResponse.json()) as {
+		project: { id: string; name: string; slug: string; webhookUrl?: string | null };
+	};
+	const project = projectData.project;
+
+	if (!project.webhookUrl) {
+		return c.json({ error: 'no_webhook', message: 'No webhook URL configured' }, 400);
+	}
+
+	const payload = buildWebhookPayload(
+		{ id: project.id, name: project.name, slug: project.slug },
+		{ id: 'test-issue-id', title: 'Test Issue', level: 'info', culprit: null },
+	);
+
+	try {
+		const response = await fetch(project.webhookUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload),
+		});
+		const body = await response.text();
+		if (!response.ok) {
+			return c.json(
+				{ error: 'webhook_failed', message: `Webhook returned ${response.status}`, body },
+				502,
+			);
+		}
+		return c.json({ success: true });
+	} catch (err) {
+		return c.json(
+			{ error: 'webhook_error', message: err instanceof Error ? err.message : 'Failed to reach webhook URL' },
+			502,
+		);
+	}
 });
 
 // Delete a project
@@ -169,7 +232,7 @@ projectRoutes.delete('/:slug', async (c) => {
 
 	if (!getResponse.ok) {
 		const error = await getResponse.json();
-		return c.json(error, getResponse.status as 404);
+		return c.json(error, getResponse.status as ContentfulStatusCode);
 	}
 
 	const projectData = (await getResponse.json()) as { project: { id: string } };
@@ -187,5 +250,5 @@ projectRoutes.delete('/:slug', async (c) => {
 	);
 
 	const data = await deleteResponse.json();
-	return c.json(data, deleteResponse.status as 200 | 403);
+	return c.json(data, deleteResponse.status as ContentfulStatusCode);
 });

@@ -87,31 +87,13 @@ async function testWebhook() {
 	testingWebhook.value = true;
 	webhookTested.value = false;
 	try {
-		await fetch(webhookUrl.value, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				text: `[${project.value?.name}] Test webhook notification from Workers Sentinel`,
-				project: {
-					id: project.value?.id,
-					name: project.value?.name,
-					slug: project.value?.slug,
-				},
-				issue: {
-					id: 'test-issue-id',
-					title: 'Test Issue',
-					level: 'info',
-					culprit: null,
-				},
-				timestamp: new Date().toISOString(),
-			}),
-		});
+		await api.post(`/api/projects/${slug.value}/test-webhook`, {});
 		webhookTested.value = true;
 		setTimeout(() => {
 			webhookTested.value = false;
 		}, 3000);
-	} catch {
-		error.value = 'Failed to send test webhook. Check the URL and try again.';
+	} catch (err) {
+		error.value = err instanceof Error ? err.message : 'Failed to send test webhook. Check the URL and try again.';
 	} finally {
 		testingWebhook.value = false;
 	}
