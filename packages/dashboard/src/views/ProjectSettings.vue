@@ -10,6 +10,7 @@ interface Project {
 	slug: string;
 	platform: string;
 	publicKey: string;
+	webhookUrl?: string | null;
 	createdAt: string;
 }
 
@@ -24,6 +25,11 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const deleting = ref(false);
 const showDeleteConfirm = ref(false);
+const webhookUrl = ref<string>('');
+const savingWebhook = ref(false);
+const webhookSaved = ref(false);
+const testingWebhook = ref(false);
+const webhookTested = ref(false);
 
 async function loadProject() {
 	loading.value = true;
@@ -35,6 +41,7 @@ async function loadProject() {
 		);
 		project.value = response.project;
 		dsn.value = response.dsn;
+		webhookUrl.value = response.project.webhookUrl || '';
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load project';
 	} finally {
@@ -54,6 +61,59 @@ async function deleteProject() {
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to delete project';
 		deleting.value = false;
+	}
+}
+
+async function saveWebhook() {
+	savingWebhook.value = true;
+	webhookSaved.value = false;
+	try {
+		await api.patch(`/api/projects/${slug.value}`, {
+			webhookUrl: webhookUrl.value || null,
+		});
+		webhookSaved.value = true;
+		setTimeout(() => {
+			webhookSaved.value = false;
+		}, 3000);
+	} catch (err) {
+		error.value = err instanceof Error ? err.message : 'Failed to save webhook';
+	} finally {
+		savingWebhook.value = false;
+	}
+}
+
+async function testWebhook() {
+	if (!webhookUrl.value) return;
+	testingWebhook.value = true;
+	webhookTested.value = false;
+	try {
+		await fetch(webhookUrl.value, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				text: `[${project.value?.name}] Test webhook notification from Workers Sentinel`,
+				project: {
+					id: project.value?.id,
+					name: project.value?.name,
+					slug: project.value?.slug,
+				},
+				issue: {
+					id: 'test-issue-id',
+					title: 'Test Issue',
+					level: 'info',
+					culprit: null,
+				},
+				timestamp: new Date().toISOString(),
+			}),
+		});
+		webhookTested.value = true;
+		setTimeout(() => {
+			webhookTested.value = false;
+		}, 3000);
+	} catch {
+		error.value = 'Failed to send test webhook. Check the URL and try again.';
+	} finally {
+		testingWebhook.value = false;
 	}
 }
 
@@ -140,6 +200,48 @@ onMounted(() => loadProject());
 						<dd class="text-gray-900 dark:text-white font-mono text-sm">{{ project.id }}</dd>
 					</div>
 				</dl>
+			</div>
+
+			<!-- Webhook Notifications -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Webhook Notifications</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Receive a POST request when a new issue is detected. Works with Slack Incoming Webhooks, Discord Webhooks, or any HTTP endpoint.
+				</p>
+
+				<div class="space-y-3">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Webhook URL</label>
+						<input
+							v-model="webhookUrl"
+							type="url"
+							placeholder="https://hooks.slack.com/services/..."
+							class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+						/>
+					</div>
+
+					<div class="flex items-center space-x-3">
+						<button
+							class="btn btn-primary"
+							:disabled="savingWebhook"
+							@click="saveWebhook"
+						>
+							<span v-if="savingWebhook">Saving...</span>
+							<span v-else-if="webhookSaved">Saved!</span>
+							<span v-else>Save</span>
+						</button>
+						<button
+							v-if="webhookUrl"
+							class="btn btn-secondary"
+							:disabled="testingWebhook"
+							@click="testWebhook"
+						>
+							<span v-if="testingWebhook">Sending...</span>
+							<span v-else-if="webhookTested">Sent!</span>
+							<span v-else>Send Test</span>
+						</button>
+					</div>
+				</div>
 			</div>
 
 			<!-- Danger zone -->

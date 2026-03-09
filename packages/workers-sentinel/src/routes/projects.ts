@@ -107,8 +107,43 @@ projectRoutes.patch('/:slug', async (c) => {
 		return c.json({ error: 'unauthorized' }, 401);
 	}
 
-	// For now, we don't support updates
-	return c.json({ error: 'not_implemented' }, 501);
+	const slug = c.req.param('slug');
+	const body = await c.req.json<{ webhookUrl?: string | null }>();
+
+	const authStateId = c.env.AUTH_STATE.idFromName('global');
+	const authState = c.env.AUTH_STATE.get(authStateId);
+
+	// Get project first
+	const getResponse = await authState.fetch(
+		new Request('http://internal/get-project', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ slug, userId: auth.user.id }),
+		}),
+	);
+
+	if (!getResponse.ok) {
+		const error = await getResponse.json();
+		return c.json(error, getResponse.status as 404);
+	}
+
+	const projectData = (await getResponse.json()) as { project: { id: string } };
+
+	// Update the project
+	const updateResponse = await authState.fetch(
+		new Request('http://internal/update-project', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				projectId: projectData.project.id,
+				userId: auth.user.id,
+				webhookUrl: body.webhookUrl,
+			}),
+		}),
+	);
+
+	const data = await updateResponse.json();
+	return c.json(data, updateResponse.status as 200 | 400 | 403);
 });
 
 // Delete a project

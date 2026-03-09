@@ -28,6 +28,7 @@ export interface Project {
 	slug: string;
 	platform: string;
 	publicKey: string;
+	webhookUrl?: string | null;
 	createdAt: string;
 	createdBy: string;
 }
