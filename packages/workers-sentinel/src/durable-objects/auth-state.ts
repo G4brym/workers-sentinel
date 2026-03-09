@@ -58,6 +58,12 @@ export class AuthState extends DurableObject<Env> {
 	private async ensureSchema(): Promise<void> {
 		if (this.initialized) return;
 		this.sql.exec(SCHEMA);
+		// Migration: add webhook_url column
+		try {
+			this.sql.exec('ALTER TABLE projects ADD COLUMN webhook_url TEXT');
+		} catch {
+			// Column already exists
+		}
 		this.initialized = true;
 	}
 
@@ -89,6 +95,8 @@ export class AuthState extends DurableObject<Env> {
 					return this.handleGetProjectByKey(request);
 				case '/delete-project':
 					return this.handleDeleteProject(request);
+				case '/update-project':
+					return this.handleUpdateProject(request);
 				case '/check-access':
 					return this.handleCheckAccess(request);
 				default:
@@ -363,7 +371,7 @@ export class AuthState extends DurableObject<Env> {
 
 		const rows = this.sql
 			.exec(
-				`SELECT p.id, p.name, p.slug, p.platform, p.public_key, p.created_at, p.created_by, pm.role as member_role
+				`SELECT p.id, p.name, p.slug, p.platform, p.public_key, p.webhook_url, p.created_at, p.created_by, pm.role as member_role
        FROM projects p
        JOIN project_members pm ON p.id = pm.project_id
        WHERE pm.user_id = ?
@@ -378,6 +386,7 @@ export class AuthState extends DurableObject<Env> {
 			slug: row.slug as string,
 			platform: row.platform as string,
 			publicKey: row.public_key as string,
+			webhookUrl: (row.webhook_url as string) || null,
 			createdAt: row.created_at as string,
 			createdBy: row.created_by as string,
 			memberRole: row.member_role as string,
@@ -397,7 +406,7 @@ export class AuthState extends DurableObject<Env> {
 		if (userId) {
 			rows = this.sql
 				.exec(
-					`SELECT p.id, p.name, p.slug, p.platform, p.public_key, p.created_at, p.created_by
+					`SELECT p.id, p.name, p.slug, p.platform, p.public_key, p.webhook_url, p.created_at, p.created_by
        FROM projects p
        JOIN project_members pm ON p.id = pm.project_id AND pm.user_id = ?
        WHERE p.slug = ?`,
@@ -408,7 +417,7 @@ export class AuthState extends DurableObject<Env> {
 		} else {
 			rows = this.sql
 				.exec(
-					`SELECT p.id, p.name, p.slug, p.platform, p.public_key, p.created_at, p.created_by
+					`SELECT p.id, p.name, p.slug, p.platform, p.public_key, p.webhook_url, p.created_at, p.created_by
        FROM projects p
        WHERE p.slug = ?`,
 					slug,
@@ -428,6 +437,7 @@ export class AuthState extends DurableObject<Env> {
 			slug: row.slug as string,
 			platform: row.platform as string,
 			publicKey: row.public_key as string,
+			webhookUrl: (row.webhook_url as string) || null,
 			createdAt: row.created_at as string,
 			createdBy: row.created_by as string,
 		};
@@ -444,7 +454,7 @@ export class AuthState extends DurableObject<Env> {
 
 		const rows = this.sql
 			.exec(
-				'SELECT id, name, slug, platform, public_key, created_at, created_by FROM projects WHERE public_key = ?',
+				'SELECT id, name, slug, platform, public_key, webhook_url, created_at, created_by FROM projects WHERE public_key = ?',
 				publicKey,
 			)
 			.toArray();
@@ -461,6 +471,7 @@ export class AuthState extends DurableObject<Env> {
 			slug: row.slug as string,
 			platform: row.platform as string,
 			publicKey: row.public_key as string,
+			webhookUrl: (row.webhook_url as string) || null,
 			createdAt: row.created_at as string,
 			createdBy: row.created_by as string,
 		};
@@ -493,6 +504,78 @@ export class AuthState extends DurableObject<Env> {
 
 		// Delete project (cascade deletes members)
 		this.sql.exec('DELETE FROM projects WHERE id = ?', projectId);
+
+		return this.jsonResponse({ success: true });
+	}
+
+	private async handleUpdateProject(request: Request): Promise<Response> {
+		const { projectId, userId, webhookUrl } = (await request.json()) as {
+			projectId: string;
+			userId: string;
+			webhookUrl?: string | null;
+		};
+
+		if (!projectId || !userId) {
+			return this.jsonResponse({ error: 'missing_fields' }, 400);
+		}
+
+		// Check user has access
+		const memberRows = this.sql
+			.exec(
+				'SELECT role FROM project_members WHERE project_id = ? AND user_id = ?',
+				projectId,
+				userId,
+			)
+			.toArray();
+
+		if (memberRows.length === 0) {
+			return this.jsonResponse(
+				{ error: 'forbidden', message: 'No access to this project' },
+				403,
+			);
+		}
+
+		// Only owner/admin can update settings
+		const role = memberRows[0].role as string;
+		if (role !== 'owner' && role !== 'admin') {
+			return this.jsonResponse(
+				{ error: 'forbidden', message: 'Only owner or admin can update settings' },
+				403,
+			);
+		}
+
+		// Validate webhook URL
+		if (webhookUrl) {
+			try {
+				const parsed = new URL(webhookUrl);
+				if (parsed.protocol !== 'https:') {
+					return this.jsonResponse(
+						{ error: 'invalid_url', message: 'Webhook URL must use HTTPS' },
+						400,
+					);
+				}
+			} catch {
+				return this.jsonResponse(
+					{ error: 'invalid_url', message: 'Invalid webhook URL' },
+					400,
+				);
+			}
+		}
+
+		const updates: string[] = [];
+		const params: (string | null)[] = [];
+
+		if (webhookUrl !== undefined) {
+			updates.push('webhook_url = ?');
+			params.push(webhookUrl || null);
+		}
+
+		if (updates.length === 0) {
+			return this.jsonResponse({ error: 'no_updates' }, 400);
+		}
+
+		params.push(projectId);
+		this.sql.exec(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`, ...params);
 
 		return this.jsonResponse({ success: true });
 	}

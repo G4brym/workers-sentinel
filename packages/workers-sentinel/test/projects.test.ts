@@ -182,6 +182,162 @@ describe('Project Routes', () => {
 		});
 	});
 
+	describe('PATCH /api/projects/:slug', () => {
+		it('should update webhook URL as owner', async () => {
+			const user = await createTestUser({
+				email: `patch-project-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Patch Project User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Patch Test Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ webhookUrl: 'https://hooks.example.com/test' }),
+				},
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { success: boolean };
+			expect(data.success).toBe(true);
+
+			// Verify the webhook URL was saved
+			const getResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+			);
+			const projectData = (await getResponse.json()) as {
+				project: { webhookUrl: string | null };
+			};
+			expect(projectData.project.webhookUrl).toBe('https://hooks.example.com/test');
+		});
+
+		it('should clear webhook URL with empty string', async () => {
+			const user = await createTestUser({
+				email: `clear-webhook-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Clear Webhook User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Clear Webhook Project' });
+
+			// Set a webhook URL first
+			await authFetch(user.token!, `http://localhost/api/projects/${project.slug}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ webhookUrl: 'https://hooks.example.com/test' }),
+			});
+
+			// Clear it
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ webhookUrl: '' }),
+				},
+			);
+
+			expect(response.status).toBe(200);
+
+			// Verify cleared
+			const getResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+			);
+			const projectData = (await getResponse.json()) as {
+				project: { webhookUrl: string | null };
+			};
+			expect(projectData.project.webhookUrl).toBeNull();
+		});
+
+		it('should reject non-HTTPS webhook URL', async () => {
+			const user = await createTestUser({
+				email: `http-webhook-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'HTTP Webhook User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'HTTP Webhook Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ webhookUrl: 'http://hooks.example.com/test' }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('invalid_url');
+		});
+
+		it('should reject invalid webhook URL', async () => {
+			const user = await createTestUser({
+				email: `invalid-webhook-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Invalid Webhook User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Invalid Webhook Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ webhookUrl: 'not-a-url' }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('invalid_url');
+		});
+
+		it('should reject unauthenticated requests', async () => {
+			const response = await SELF.fetch('http://localhost/api/projects/some-slug', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ webhookUrl: 'https://hooks.example.com/test' }),
+			});
+
+			expect(response.status).toBe(401);
+		});
+
+		it('should reject update from non-member user', async () => {
+			const user1 = await createTestUser({
+				email: `patch-owner-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Patch Owner',
+			});
+			const user2 = await createTestUser({
+				email: `patch-outsider-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Patch Outsider',
+			});
+
+			const project = await createTestProject(user1.token!, { name: 'RBAC Patch Project' });
+
+			const response = await authFetch(
+				user2.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ webhookUrl: 'https://hooks.example.com/evil' }),
+				},
+			);
+
+			// Non-member should get 404 (project not found for them)
+			expect(response.status).toBe(404);
+		});
+	});
+
 	describe('DELETE /api/projects/:slug', () => {
 		it('should delete project as owner', async () => {
 			const user = await createTestUser({

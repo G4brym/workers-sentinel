@@ -142,6 +142,8 @@ export class ProjectState extends DurableObject<Env> {
 		const existingIssue = existingRows.length > 0 ? existingRows[0] : null;
 
 		let issueId: string;
+		let newIssueTitle: string | undefined;
+		let newIssueCulprit: string | null | undefined;
 
 		if (existingIssue) {
 			// Update existing issue
@@ -157,6 +159,8 @@ export class ProjectState extends DurableObject<Env> {
 			const title = extractTitle(event);
 			const culprit = extractCulprit(event);
 			const metadata = extractMetadata(event);
+			newIssueTitle = title;
+			newIssueCulprit = culprit;
 
 			this.sql.exec(
 				`INSERT INTO issues (id, fingerprint, title, culprit, level, platform, first_seen, last_seen, count, status, metadata)
@@ -236,7 +240,14 @@ export class ProjectState extends DurableObject<Env> {
 			}
 		}
 
-		return this.jsonResponse({ eventId, issueId });
+		return this.jsonResponse({
+			eventId,
+			issueId,
+			isNewIssue: !existingIssue,
+			title: newIssueTitle,
+			level: event.level || 'error',
+			culprit: newIssueCulprit ?? null,
+		});
 	}
 
 	private static readonly ALLOWED_SORT_FIELDS = new Set([

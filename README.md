@@ -37,6 +37,7 @@ Workers Sentinel is a lightweight, self-hosted error tracking and monitoring sol
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
 - [SDK Configuration](#sdk-configuration)
+- [Webhook Notifications](#webhook-notifications)
 - [Architecture](#architecture)
 - [Roadmap & Future Enhancements](#roadmap--future-enhancements)
 - [Known Limitations](#known-limitations)
@@ -91,6 +92,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🏷️ Tags & Context**: View tags, breadcrumbs, and contextual data
 - **✅ Issue Management**: Mark issues as resolved or ignored
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
+- **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint
 
 ## Prerequisites
 
@@ -233,6 +235,49 @@ sentry.Init(sentry.ClientOptions{
 
 The DSN is displayed when you create a project in the dashboard, or you can find it in the project settings.
 
+## Webhook Notifications
+
+Workers Sentinel can send a POST request to any HTTP endpoint when a new issue is detected. This enables integration with Slack, Discord, PagerDuty, or any custom alerting system.
+
+### Setup
+
+1. Go to **Project Settings** in the dashboard
+2. Enter your webhook URL in the **Webhook Notifications** section
+3. Click **Save**
+4. Use **Send Test** to verify the endpoint receives notifications
+
+Webhook URLs must use HTTPS.
+
+### Payload Format
+
+When a new issue is detected, Workers Sentinel sends a JSON POST request:
+
+```json
+{
+  "text": "[My App] New error: TypeError: Cannot read property 'foo' of undefined in app.js",
+  "project": {
+    "id": "project-uuid",
+    "name": "My App",
+    "slug": "my-app"
+  },
+  "issue": {
+    "id": "issue-uuid",
+    "title": "TypeError: Cannot read property 'foo' of undefined",
+    "level": "error",
+    "culprit": "app.js"
+  },
+  "timestamp": "2025-01-01T00:00:00.000Z"
+}
+```
+
+The `text` field is formatted for direct use with Slack Incoming Webhooks. For Discord, use the same URL format with `/slack` appended to your Discord webhook URL.
+
+### Notes
+
+- Webhooks fire only for **new** issues (first occurrence of a unique error fingerprint)
+- Delivery is best-effort — failures are logged but not retried
+- Webhook requests are sent asynchronously and never slow down event ingestion
+
 ## Architecture
 
 Workers Sentinel is built with modern web technologies:
@@ -262,7 +307,8 @@ Planned features for future releases:
 - [ ] Source map support for JavaScript errors
 - [ ] Release tracking and deployment correlation
 - [ ] Performance monitoring (transactions, spans)
-- [ ] Alerting integrations (webhook, email)
+- [x] Webhook alerting notifications
+- [ ] Email alerting notifications
 - [ ] Session replay support
 - [ ] Team/organization support
 - [ ] Issue assignment
@@ -276,7 +322,7 @@ Planned features for future releases:
 **Current Limitations:**
 - No source map support yet (stack traces show minified code)
 - No performance monitoring (error tracking only)
-- No alerting/notifications
+- Email notifications not yet available (webhooks supported)
 - Single-user admin (no team management yet)
 
 **Sentry Feature Parity:**

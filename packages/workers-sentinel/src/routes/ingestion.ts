@@ -5,6 +5,7 @@ import {
 	maybeDecompress,
 	parseEnvelope,
 } from '../lib/envelope-parser';
+import { buildWebhookPayload, sendWebhook } from '../lib/webhook';
 import type { Env, Project } from '../types';
 
 export const ingestionRoutes = new Hono<{ Bindings: Env }>();
@@ -137,6 +138,32 @@ async function handleIngestion(c: Context<{ Bindings: Env }>): Promise<Response>
 			}
 		} catch (error) {
 			console.error('Ingest error:', error);
+		}
+	}
+
+	// Fire webhooks for new issues (non-blocking)
+	if (project.webhookUrl) {
+		for (const result of results) {
+			const r = result as {
+				eventId: string;
+				issueId: string;
+				isNewIssue?: boolean;
+				title?: string;
+				level?: string;
+				culprit?: string | null;
+			};
+			if (r.isNewIssue && r.title) {
+				const payload = buildWebhookPayload(
+					{ id: project.id, name: project.name, slug: project.slug },
+					{
+						id: r.issueId,
+						title: r.title,
+						level: r.level || 'error',
+						culprit: r.culprit || null,
+					},
+				);
+				c.executionCtx.waitUntil(sendWebhook(project.webhookUrl, payload));
+			}
 		}
 	}
 
