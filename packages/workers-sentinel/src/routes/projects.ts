@@ -102,6 +102,44 @@ projectRoutes.get('/:slug', async (c) => {
 	return c.json({ ...data, dsn });
 });
 
+// Get project settings
+projectRoutes.get('/:slug/settings', async (c) => {
+	const auth = c.get('auth');
+	if (!auth) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+
+	const slug = c.req.param('slug');
+
+	const authStateId = c.env.AUTH_STATE.idFromName('global');
+	const authState = c.env.AUTH_STATE.get(authStateId);
+
+	const response = await authState.fetch(
+		new Request('http://internal/get-project', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ slug, userId: auth.user.id }),
+		}),
+	);
+
+	if (!response.ok) {
+		const error = await response.json();
+		return c.json(error, response.status as 404);
+	}
+
+	const { project } = (await response.json()) as { project: { id: string } };
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const settingsResponse = await projectState.fetch(
+		new Request('http://internal/settings'),
+	);
+
+	const data = await settingsResponse.json();
+	return c.json(data);
+});
+
 // Update a project
 projectRoutes.patch('/:slug', async (c) => {
 	const auth = c.get('auth');
@@ -110,7 +148,7 @@ projectRoutes.patch('/:slug', async (c) => {
 	}
 
 	const slug = c.req.param('slug');
-	const body = await c.req.json<{ webhookUrl?: string | null; maxEventsPerHour?: number }>();
+	const body = await c.req.json<{ webhookUrl?: string | null; maxEventsPerHour?: number; retentionDays?: number }>();
 
 	const authStateId = c.env.AUTH_STATE.idFromName('global');
 	const authState = c.env.AUTH_STATE.get(authStateId);
@@ -174,6 +212,28 @@ projectRoutes.patch('/:slug', async (c) => {
 		}
 
 		Object.assign(result, data);
+	}
+
+
+	// Update retention settings in ProjectState if provided
+	if (body.retentionDays !== undefined) {
+		const projectStateId = c.env.PROJECT_STATE.idFromName(projectData.project.id);
+		const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+		const settingsResponse = await projectState.fetch(
+			new Request('http://internal/settings/update', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ retentionDays: body.retentionDays }),
+			}),
+		);
+
+		const settingsData = (await settingsResponse.json()) as Record<string, unknown>;
+		if (!settingsResponse.ok) {
+			return c.json(settingsData, settingsResponse.status as ContentfulStatusCode);
+		}
+
+		Object.assign(result, settingsData);
 	}
 
 	return c.json(Object.keys(result).length > 0 ? result : { success: true });
@@ -269,8 +329,7 @@ projectRoutes.post('/:slug/test-webhook', async (c) => {
 			{ error: 'webhook_error', message: err instanceof Error ? err.message : 'Failed to reach webhook URL' },
 			502,
 		);
-	}
-});
+	}});
 
 // Delete a project
 projectRoutes.delete('/:slug', async (c) => {

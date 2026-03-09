@@ -5,7 +5,7 @@ import {
 	extractTitle,
 	generateFingerprint,
 } from '../lib/fingerprint';
-import type { Env, Issue, SentryEvent } from '../types';
+import type { Env, Issue, ProjectSettings, SentryEvent } from '../types';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS issues (
@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS event_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_event_tags_key_value ON event_tags(key, value);
 CREATE INDEX IF NOT EXISTS idx_event_tags_issue ON event_tags(issue_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 export class ProjectState extends DurableObject<Env> {
@@ -104,6 +109,15 @@ export class ProjectState extends DurableObject<Env> {
 		this.sql.exec(SCHEMA);
 		this.warmRateLimitCounter();
 		this.initialized = true;
+
+		// Schedule cleanup alarm if retention is enabled and no alarm exists
+		const alarm = await this.ctx.storage.getAlarm();
+		if (!alarm) {
+			const retentionDays = this.getRetentionDays();
+			if (retentionDays > 0) {
+				this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+			}
+		}
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -142,6 +156,10 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetTags(request);
 				case '/tag-values':
 					return this.handleGetTagValues(request);
+				case '/settings':
+					return this.handleGetSettings();
+				case '/settings/update':
+					return this.handleUpdateSettings(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -796,6 +814,86 @@ export class ProjectState extends DurableObject<Env> {
 			currentBucket,
 			isLimited: maxPerHour > 0 && currentCount >= maxPerHour,
 		});
+	}
+
+	async alarm(): Promise<void> {
+		await this.ensureSchema();
+
+		const retentionDays = this.getRetentionDays();
+		if (retentionDays <= 0) return;
+
+		const cutoffDate = new Date(
+			Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+		).toISOString();
+
+		// Delete old events
+		this.sql.exec('DELETE FROM events WHERE received_at < ?', cutoffDate);
+
+		// Delete old issue_stats buckets
+		this.sql.exec('DELETE FROM issue_stats WHERE bucket < ?', cutoffDate);
+
+		// Recalculate issue counts from remaining events
+		this.sql.exec(`
+			UPDATE issues SET count = (
+				SELECT COUNT(*) FROM events WHERE events.issue_id = issues.id
+			)
+		`);
+
+		// Recalculate user counts
+		this.sql.exec(`
+			UPDATE issues SET user_count = (
+				SELECT COUNT(*) FROM issue_users WHERE issue_users.issue_id = issues.id
+			)
+		`);
+
+		// Delete issues with no remaining events
+		this.sql.exec('DELETE FROM issues WHERE count = 0');
+
+		// Clean up orphaned issue_users for deleted issues
+		this.sql.exec(
+			'DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)',
+		);
+
+		// Reschedule alarm for tomorrow
+		this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+	}
+
+	private getRetentionDays(): number {
+		const rows = this.sql
+			.exec("SELECT value FROM settings WHERE key = 'retention_days'")
+			.toArray();
+		return rows.length > 0 ? Number.parseInt(rows[0].value as string, 10) : 0;
+	}
+
+	private handleGetSettings(): Response {
+		const retentionDays = this.getRetentionDays();
+		return this.jsonResponse({ retentionDays });
+	}
+
+	private async handleUpdateSettings(request: Request): Promise<Response> {
+		const { retentionDays } = (await request.json()) as ProjectSettings;
+
+		if (typeof retentionDays !== 'number' || retentionDays < 0) {
+			return this.jsonResponse(
+				{ error: 'invalid_retention_days', message: 'retentionDays must be 0 or a positive number' },
+				400,
+			);
+		}
+
+		this.sql.exec(
+			"INSERT OR REPLACE INTO settings (key, value) VALUES ('retention_days', ?)",
+			String(retentionDays),
+		);
+
+		if (retentionDays > 0) {
+			// Schedule alarm for cleanup (24 hours from now)
+			this.ctx.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000);
+		} else {
+			// Disable retention — cancel any pending alarm
+			this.ctx.storage.deleteAlarm();
+		}
+
+		return this.jsonResponse({ retentionDays });
 	}
 
 	private jsonResponse(data: unknown, status = 200): Response {
