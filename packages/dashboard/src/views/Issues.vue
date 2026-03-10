@@ -27,6 +27,13 @@ const slug = computed(() => route.params.slug as string);
 const currentProject = computed(() => projectsStore.projects.find((p) => p.slug === slug.value));
 const isCloudflareWorkers = computed(() => currentProject.value?.platform === 'cloudflare-workers');
 
+interface TagFacet {
+	key: string;
+	issueCount: number;
+	eventCount: number;
+	topValues: Array<{ value: string; issueCount: number; eventCount: number }>;
+}
+
 const issues = ref<Issue[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -34,6 +41,8 @@ const statusFilter = ref<string>('unresolved');
 const hasMore = ref(false);
 const nextCursor = ref<string | undefined>();
 const dsn = ref<string>('');
+const tagFacets = ref<TagFacet[]>([]);
+const selectedTags = ref<string[]>([]);
 
 async function loadIssues(append = false) {
 	if (!append) {
@@ -48,6 +57,9 @@ async function loadIssues(append = false) {
 		}
 		if (append && nextCursor.value) {
 			params.set('cursor', nextCursor.value);
+		}
+		for (const tag of selectedTags.value) {
+			params.append('tag', tag);
 		}
 
 		const response = await api.get<{
@@ -73,6 +85,32 @@ async function loadIssues(append = false) {
 	} finally {
 		loading.value = false;
 	}
+}
+
+async function loadTagFacets() {
+	try {
+		const response = await api.get<{ facets: TagFacet[] }>(
+			`/api/projects/${slug.value}/tags?limit=10`,
+		);
+		tagFacets.value = response.facets;
+	} catch {
+		// Ignore - tag filters just won't appear
+	}
+}
+
+function toggleTag(key: string, value: string) {
+	if (value) {
+		selectedTags.value = selectedTags.value.filter((t) => !t.startsWith(`${key}:`));
+		selectedTags.value.push(`${key}:${value}`);
+	} else {
+		selectedTags.value = selectedTags.value.filter((t) => !t.startsWith(`${key}:`));
+	}
+	loadIssues();
+}
+
+function removeTag(tag: string) {
+	selectedTags.value = selectedTags.value.filter((t) => t !== tag);
+	loadIssues();
 }
 
 async function loadDsn() {
@@ -117,7 +155,10 @@ function getLevelBadgeClass(level: string): string {
 	}
 }
 
-onMounted(() => loadIssues());
+onMounted(() => {
+	loadIssues();
+	loadTagFacets();
+});
 
 watch(statusFilter, () => loadIssues());
 watch(slug, () => loadIssues());
@@ -126,13 +167,41 @@ watch(slug, () => loadIssues());
 <template>
 	<div>
 		<!-- Filters -->
-		<div class="flex items-center space-x-4 mb-6">
+		<div class="flex items-center space-x-4 mb-4">
 			<select v-model="statusFilter" class="input w-auto">
 				<option value="">All Issues</option>
 				<option value="unresolved">Unresolved</option>
 				<option value="resolved">Resolved</option>
 				<option value="ignored">Ignored</option>
 			</select>
+			<select
+				v-for="facet in tagFacets"
+				:key="facet.key"
+				class="input w-auto"
+				@change="toggleTag(facet.key, ($event.target as HTMLSelectElement).value)"
+			>
+				<option value="">{{ facet.key }}</option>
+				<option v-for="tv in facet.topValues" :key="tv.value" :value="tv.value">
+					{{ tv.value }} ({{ tv.issueCount }})
+				</option>
+			</select>
+		</div>
+
+		<!-- Active tag filters -->
+		<div v-if="selectedTags.length > 0" class="flex items-center flex-wrap gap-2 mb-4">
+			<span
+				v-for="tag in selectedTags"
+				:key="tag"
+				class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-300"
+			>
+				{{ tag }}
+				<button
+					class="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full hover:bg-primary-200 dark:hover:bg-primary-800"
+					@click="removeTag(tag)"
+				>
+					&times;
+				</button>
+			</span>
 		</div>
 
 		<!-- Loading -->
