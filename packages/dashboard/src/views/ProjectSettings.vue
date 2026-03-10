@@ -366,6 +366,17 @@ onMounted(() => {
 				</div>
 			</div>
 
+			<!-- API Tokens -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">API Tokens</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Create personal API tokens for programmatic access to the API.
+				</p>
+				<router-link to="/settings/tokens" class="btn btn-secondary">
+					Manage API Tokens
+				</router-link>
+			</div>
+
 			<!-- Danger zone -->
 			<div class="card border-error-200 dark:border-error-800">
 				<div class="p-6 border-b border-error-200 dark:border-error-800">

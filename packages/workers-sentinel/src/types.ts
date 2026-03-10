@@ -40,6 +40,17 @@ export interface ProjectMember {
 	createdAt: string;
 }
 
+// API token types
+export interface ApiToken {
+	id: string;
+	userId: string;
+	name: string;
+	tokenPrefix: string;
+	lastUsedAt: string | null;
+	expiresAt: string | null;
+	createdAt: string;
+}
+
 // Issue types
 export interface Issue {
 	id: string;

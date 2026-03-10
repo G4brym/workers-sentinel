@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { Env, Project, Session, User } from '../types';
+import type { ApiToken, Env, Project, Session, User } from '../types';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -44,6 +44,20 @@ CREATE TABLE IF NOT EXISTS project_members (
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  token_prefix TEXT NOT NULL,
+  expires_at TEXT,
+  last_used_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
 `;
 
 export class AuthState extends DurableObject<Env> {
@@ -99,6 +113,14 @@ export class AuthState extends DurableObject<Env> {
 					return this.handleUpdateProject(request);
 				case '/check-access':
 					return this.handleCheckAccess(request);
+				case '/create-api-token':
+					return this.handleCreateApiToken(request);
+				case '/list-api-tokens':
+					return this.handleListApiTokens(request);
+				case '/revoke-api-token':
+					return this.handleRevokeApiToken(request);
+				case '/validate-api-token':
+					return this.handleValidateApiToken(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -600,6 +622,196 @@ export class AuthState extends DurableObject<Env> {
 			hasAccess: !!member,
 			role: member?.role || null,
 		});
+	}
+
+	private async handleCreateApiToken(request: Request): Promise<Response> {
+		const { userId, name, expiresAt } = (await request.json()) as {
+			userId: string;
+			name: string;
+			expiresAt?: string;
+		};
+
+		if (!userId || !name) {
+			return this.jsonResponse(
+				{ error: 'missing_fields', message: 'userId and name are required' },
+				400,
+			);
+		}
+
+		// Validate expiresAt if provided
+		if (expiresAt !== undefined && expiresAt !== null) {
+			const expiry = new Date(expiresAt);
+			if (isNaN(expiry.getTime())) {
+				return this.jsonResponse(
+					{ error: 'invalid_date', message: 'expiresAt must be a valid ISO date string' },
+					400,
+				);
+			}
+			if (expiry <= new Date()) {
+				return this.jsonResponse(
+					{ error: 'invalid_date', message: 'expiresAt must be a future date' },
+					400,
+				);
+			}
+		}
+
+		// Limit: max 10 tokens per user
+		const countResult = this.sql
+			.exec('SELECT COUNT(*) as count FROM api_tokens WHERE user_id = ?', userId)
+			.one();
+		if ((countResult?.count as number) >= 10) {
+			return this.jsonResponse(
+				{ error: 'limit_exceeded', message: 'Maximum of 10 API tokens per user' },
+				400,
+			);
+		}
+
+		// Generate raw token: wst_ + 64 hex chars
+		const rawToken = `wst_${this.generateKey(64)}`;
+
+		// Hash the full token for storage
+		const tokenHash = await this.hashPassword(rawToken);
+
+		const tokenId = crypto.randomUUID();
+		const tokenPrefix = rawToken.slice(0, 12);
+		const now = new Date().toISOString();
+
+		this.sql.exec(
+			'INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+			tokenId,
+			userId,
+			name,
+			tokenHash,
+			tokenPrefix,
+			expiresAt || null,
+			now,
+		);
+
+		const token: ApiToken = {
+			id: tokenId,
+			userId,
+			name,
+			tokenPrefix,
+			lastUsedAt: null,
+			expiresAt: expiresAt || null,
+			createdAt: now,
+		};
+
+		return this.jsonResponse({ token, rawToken });
+	}
+
+	private async handleListApiTokens(request: Request): Promise<Response> {
+		const { userId } = (await request.json()) as { userId: string };
+
+		if (!userId) {
+			return this.jsonResponse({ error: 'missing_user_id' }, 400);
+		}
+
+		const rows = this.sql
+			.exec(
+				'SELECT id, user_id, name, token_prefix, last_used_at, expires_at, created_at FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC',
+				userId,
+			)
+			.toArray();
+
+		const tokens: ApiToken[] = rows.map((row) => ({
+			id: row.id as string,
+			userId: row.user_id as string,
+			name: row.name as string,
+			tokenPrefix: row.token_prefix as string,
+			lastUsedAt: (row.last_used_at as string) || null,
+			expiresAt: (row.expires_at as string) || null,
+			createdAt: row.created_at as string,
+		}));
+
+		return this.jsonResponse({ tokens });
+	}
+
+	private async handleRevokeApiToken(request: Request): Promise<Response> {
+		const { tokenId, userId } = (await request.json()) as {
+			tokenId: string;
+			userId: string;
+		};
+
+		if (!tokenId || !userId) {
+			return this.jsonResponse({ error: 'missing_fields' }, 400);
+		}
+
+		// Verify the token belongs to the user
+		const rows = this.sql
+			.exec('SELECT id FROM api_tokens WHERE id = ? AND user_id = ?', tokenId, userId)
+			.toArray();
+
+		if (rows.length === 0) {
+			return this.jsonResponse(
+				{ error: 'not_found', message: 'Token not found or does not belong to user' },
+				404,
+			);
+		}
+
+		this.sql.exec('DELETE FROM api_tokens WHERE id = ?', tokenId);
+
+		return this.jsonResponse({ success: true });
+	}
+
+	private async handleValidateApiToken(request: Request): Promise<Response> {
+		const { token } = (await request.json()) as { token: string };
+
+		if (!token || !token.startsWith('wst_')) {
+			return this.jsonResponse({ error: 'invalid_token' }, 401);
+		}
+
+		// Hash the token and look it up
+		const tokenHash = await this.hashPassword(token);
+
+		const rows = this.sql
+			.exec(
+				`SELECT t.id as token_id, t.user_id, t.expires_at,
+				u.id as uid, u.email, u.name, u.role, u.created_at, u.updated_at
+				FROM api_tokens t
+				JOIN users u ON t.user_id = u.id
+				WHERE t.token_hash = ?`,
+				tokenHash,
+			)
+			.toArray();
+
+		if (rows.length === 0) {
+			return this.jsonResponse({ error: 'invalid_token' }, 401);
+		}
+
+		const row = rows[0];
+
+		// Check expiration
+		const expiresAt = row.expires_at as string | null;
+		if (expiresAt && new Date(expiresAt) < new Date()) {
+			return this.jsonResponse({ error: 'token_expired' }, 401);
+		}
+
+		// Update last_used_at
+		this.sql.exec(
+			'UPDATE api_tokens SET last_used_at = ? WHERE id = ?',
+			new Date().toISOString(),
+			row.token_id as string,
+		);
+
+		const user: User = {
+			id: row.uid as string,
+			email: row.email as string,
+			name: row.name as string,
+			role: row.role as 'admin' | 'member',
+			createdAt: row.created_at as string,
+			updatedAt: row.updated_at as string,
+		};
+
+		// Return in the same format as session validation
+		const session: Session = {
+			id: row.token_id as string,
+			userId: row.uid as string,
+			expiresAt: expiresAt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+			createdAt: row.created_at as string,
+		};
+
+		return this.jsonResponse({ user, session });
 	}
 
 	private async createSession(userId: string): Promise<Session> {

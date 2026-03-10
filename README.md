@@ -38,6 +38,7 @@ Workers Sentinel is a lightweight, self-hosted error tracking and monitoring sol
 - [Getting Started](#getting-started)
 - [SDK Configuration](#sdk-configuration)
 - [Webhook Notifications](#webhook-notifications)
+- [API Tokens](#api-tokens)
 - [Architecture](#architecture)
 - [Roadmap & Future Enhancements](#roadmap--future-enhancements)
 - [Known Limitations](#known-limitations)
@@ -280,6 +281,53 @@ The `text` field is formatted for direct use with Slack Incoming Webhooks. For D
 - Webhooks fire only for **new** issues (first occurrence of a unique error fingerprint)
 - Delivery is best-effort — failures are logged but not retried
 - Webhook requests are sent asynchronously and never slow down event ingestion
+
+## API Tokens
+
+API tokens allow programmatic access to the Workers Sentinel API — useful for CI/CD pipelines, scripts, custom dashboards, and integrations with incident management tools.
+
+### Creating a Token
+
+1. Go to **Project Settings** in the dashboard
+2. Click **Manage API Tokens** in the API Tokens section
+3. Enter a token name (e.g., `ci-pipeline`) and an optional expiration date
+4. Click **Create Token**
+5. **Copy the token immediately** — it will only be shown once
+
+### Using a Token
+
+Include the token in the `Authorization` header of any API request:
+
+```bash
+# List projects
+curl -H "Authorization: Bearer wst_your_token_here" \
+  https://your-sentinel.workers.dev/api/projects
+
+# Get issues for a project
+curl -H "Authorization: Bearer wst_your_token_here" \
+  https://your-sentinel.workers.dev/api/projects/my-app/issues
+
+# List events for an issue
+curl -H "Authorization: Bearer wst_your_token_here" \
+  https://your-sentinel.workers.dev/api/projects/my-app/issues/issue-uuid/events
+```
+
+API tokens use the `wst_` prefix and work alongside existing session-based authentication.
+
+### Token Management
+
+- **Expiration**: Tokens can be created with an optional expiration date. Expired tokens are automatically rejected.
+- **Revocation**: Revoke tokens from the API Tokens dashboard page. Revoked tokens stop working immediately.
+- **Limits**: Each user can have up to 10 active API tokens.
+- **Audit**: Each token's Last Used timestamp is updated on each successful request.
+
+### Security Best Practices
+
+- Store tokens in environment variables, never in source code
+- Use descriptive names so you can identify which token belongs to which service
+- Set expiration dates for tokens used in temporary or rotating access scenarios
+- Revoke tokens immediately when they are no longer needed or may be compromised
+- Token management (creating, listing, revoking) requires session authentication — a compromised API token cannot create new tokens
 
 ## Architecture
 
