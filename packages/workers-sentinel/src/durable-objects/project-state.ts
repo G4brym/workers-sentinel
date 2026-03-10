@@ -64,6 +64,18 @@ CREATE TABLE IF NOT EXISTS issue_users (
   PRIMARY KEY (issue_id, user_hash),
   FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS event_tags (
+  event_id TEXT NOT NULL,
+  issue_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (event_id, key),
+  FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+  FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_event_tags_key_value ON event_tags(key, value);
+CREATE INDEX IF NOT EXISTS idx_event_tags_issue ON event_tags(issue_id);
 `;
 
 export class ProjectState extends DurableObject<Env> {
@@ -107,6 +119,10 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetLatestEvents(request);
 				case '/stats':
 					return this.handleGetStats(request);
+				case '/tags':
+					return this.handleGetTags(request);
+				case '/tag-values':
+					return this.handleGetTagValues(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -197,6 +213,26 @@ export class ProjectState extends DurableObject<Env> {
 			JSON.stringify(event),
 		);
 
+		// Store indexed tags
+		if (event.tags && typeof event.tags === 'object') {
+			for (const [key, value] of Object.entries(event.tags)) {
+				if (
+					typeof key === 'string' &&
+					typeof value === 'string' &&
+					key.length <= 200 &&
+					value.length <= 200
+				) {
+					this.sql.exec(
+						'INSERT OR IGNORE INTO event_tags (event_id, issue_id, key, value) VALUES (?, ?, ?, ?)',
+						eventId,
+						issueId,
+						key,
+						value,
+					);
+				}
+			}
+		}
+
 		// Update hourly stats
 		const bucket = this.getHourBucket(timestamp);
 		this.sql.exec(
@@ -260,13 +296,14 @@ export class ProjectState extends DurableObject<Env> {
 	]);
 
 	private async handleGetIssues(request: Request): Promise<Response> {
-		const { status, level, query, sort, cursor, limit } = (await request.json()) as {
+		const { status, level, query, sort, cursor, limit, tags } = (await request.json()) as {
 			status?: string;
 			level?: string;
 			query?: string;
 			sort?: string;
 			cursor?: string;
 			limit?: number;
+			tags?: string[];
 		};
 
 		const pageLimit = Math.min(limit || 25, 100);
@@ -289,6 +326,18 @@ export class ProjectState extends DurableObject<Env> {
 		if (query) {
 			sql += ' AND (title LIKE ? OR culprit LIKE ?)';
 			params.push(`%${query}%`, `%${query}%`);
+		}
+
+		if (tags && tags.length > 0) {
+			for (let i = 0; i < Math.min(tags.length, 5); i++) {
+				const [tagKey, ...rest] = tags[i].split(':');
+				const tagValue = rest.join(':');
+				if (tagKey && tagValue) {
+					sql +=
+						' AND id IN (SELECT DISTINCT issue_id FROM event_tags WHERE key = ? AND value = ?)';
+					params.push(tagKey, tagValue);
+				}
+			}
 		}
 
 		if (cursor) {
@@ -492,6 +541,86 @@ export class ProjectState extends DurableObject<Env> {
 		const total = series.reduce((sum, s) => sum + s.count, 0);
 
 		return this.jsonResponse({ total, series });
+	}
+
+	private async handleGetTags(request: Request): Promise<Response> {
+		const { limit } = (await request.json()) as { limit?: number };
+		const facetLimit = Math.min(limit || 10, 50);
+
+		const keys = this.sql
+			.exec(
+				`SELECT key, COUNT(DISTINCT issue_id) as issue_count, COUNT(*) as event_count
+				 FROM event_tags
+				 GROUP BY key
+				 ORDER BY issue_count DESC
+				 LIMIT ?`,
+				facetLimit,
+			)
+			.toArray();
+
+		const facets = keys.map((row) => {
+			const topValues = this.sql
+				.exec(
+					`SELECT value, COUNT(DISTINCT issue_id) as issue_count, COUNT(*) as event_count
+					 FROM event_tags
+					 WHERE key = ?
+					 GROUP BY value
+					 ORDER BY issue_count DESC
+					 LIMIT 10`,
+					row.key as string,
+				)
+				.toArray();
+
+			return {
+				key: row.key as string,
+				issueCount: row.issue_count as number,
+				eventCount: row.event_count as number,
+				topValues: topValues.map((v) => ({
+					value: v.value as string,
+					issueCount: v.issue_count as number,
+					eventCount: v.event_count as number,
+				})),
+			};
+		});
+
+		return this.jsonResponse({ facets });
+	}
+
+	private async handleGetTagValues(request: Request): Promise<Response> {
+		const { key, query, limit } = (await request.json()) as {
+			key: string;
+			query?: string;
+			limit?: number;
+		};
+
+		if (!key) {
+			return this.jsonResponse({ error: 'missing_key' }, 400);
+		}
+
+		const pageLimit = Math.min(limit || 25, 100);
+
+		let sql = `SELECT value, COUNT(DISTINCT issue_id) as issue_count, COUNT(*) as event_count
+			FROM event_tags
+			WHERE key = ?`;
+		const params: (string | number)[] = [key];
+
+		if (query) {
+			sql += " AND value LIKE ? ESCAPE '\\'";
+			const escaped = query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+			params.push(`%${escaped}%`);
+		}
+
+		sql += ' GROUP BY value ORDER BY issue_count DESC LIMIT ?';
+		params.push(pageLimit);
+
+		const rows = this.sql.exec(sql, ...params).toArray();
+		const values = rows.map((row) => ({
+			value: row.value as string,
+			issueCount: row.issue_count as number,
+			eventCount: row.event_count as number,
+		}));
+
+		return this.jsonResponse({ key, values });
 	}
 
 	private getHourBucket(timestamp: string): string {
