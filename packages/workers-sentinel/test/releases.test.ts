@@ -284,6 +284,80 @@ describe('Release Tracking', () => {
 		});
 	});
 
+	describe('Ignored issues are not reopened', () => {
+		it('should not reopen ignored issues when they appear in new events', async () => {
+			const user = await createTestUser({
+				email: `release-ignored-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Ignored Regression Test',
+			});
+			const project = await createTestProject(user.token!, { name: 'Ignored Regression Project' });
+
+			const errorConfig = {
+				exception: {
+					type: 'Error',
+					value: 'ignored regression error test',
+					stacktrace: {
+						frames: [
+							{ filename: 'app.js', function: 'ignoredFn', lineno: 50, in_app: true as const },
+						],
+					},
+				},
+			};
+
+			// Send initial error
+			await sendTestEvent(project.id, project.publicKey, {
+				...errorConfig,
+				release: 'app@6.0.0',
+			});
+
+			// Get the issue and mark it as ignored
+			const issuesResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
+			const issuesData = (await issuesResponse.json()) as {
+				issues: Array<{ id: string; status: string }>;
+			};
+			const issueId = issuesData.issues[0].id;
+
+			await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/${issueId}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ status: 'ignored' }),
+				},
+			);
+
+			// Verify it's ignored
+			const ignoredResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/${issueId}`,
+			);
+			const ignoredData = (await ignoredResponse.json()) as {
+				issue: { status: string };
+			};
+			expect(ignoredData.issue.status).toBe('ignored');
+
+			// Send same error again with a new release
+			await sendTestEvent(project.id, project.publicKey, {
+				...errorConfig,
+				release: 'app@6.1.0',
+			});
+
+			// Verify the issue remains ignored (NOT reopened)
+			const stillIgnoredResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/${issueId}`,
+			);
+			const stillIgnoredData = (await stillIgnoredResponse.json()) as {
+				issue: { status: string };
+			};
+			expect(stillIgnoredData.issue.status).toBe('ignored');
+		});
+	});
+
 	describe('Events without release', () => {
 		it('should not create release records for events without release field', async () => {
 			const user = await createTestUser({

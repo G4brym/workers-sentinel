@@ -393,8 +393,8 @@ export class ProjectState extends DurableObject<Env> {
 		}
 
 		// Track release and detect regressions
-		try {
-			if (event.release) {
+		if (event.release) {
+			try {
 				const releaseVersion = event.release;
 				const isNewIssue = !existingIssue;
 
@@ -451,9 +451,9 @@ export class ProjectState extends DurableObject<Env> {
 				if (existingIssue && existingIssue.status === 'resolved') {
 					this.sql.exec("UPDATE issues SET status = 'unresolved' WHERE id = ?", issueId);
 				}
+			} catch (e) {
+				console.error('Release tracking failed:', e);
 			}
-		} catch (e) {
-			console.error('Failed to track release:', e);
 		}
 
 		// Track unique users

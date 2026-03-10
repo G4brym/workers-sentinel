@@ -88,6 +88,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **👥 User Tracking**: See how many users are affected by each issue
 - **🏷️ Tags & Context**: View tags, breadcrumbs, and contextual data
 - **✅ Issue Management**: Mark issues as resolved or ignored
+- **🚀 Release Tracking**: Track errors per release with automatic regression detection
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
 
 ## Prerequisites
@@ -231,6 +232,27 @@ sentry.Init(sentry.ClientOptions{
 
 The DSN is displayed when you create a project in the dashboard, or you can find it in the project settings.
 
+## Releases
+
+Workers Sentinel automatically tracks releases when your Sentry SDK is configured with a `release` option. Each event with a `release` field is associated with that release, giving you per-release error breakdowns.
+
+### How It Works
+
+- **Automatic tracking**: When events arrive with a `release` field, Sentinel creates or updates the release record and links the issue to that release.
+- **Regression detection**: If a previously resolved issue reappears in a new event, Sentinel automatically reopens it by setting its status back to `unresolved`. Issues marked as `ignored` are not affected — only `resolved` issues are reopened.
+- **Dashboard views**: Browse all releases for a project, see event and issue counts per release, and drill into individual releases to see which issues appeared.
+
+### Configuring Releases in Sentry SDKs
+
+```javascript
+Sentry.init({
+  dsn: 'https://<public_key>@<your-worker>.workers.dev/<project_id>',
+  release: 'my-app@1.2.0',
+});
+```
+
+Most Sentry SDKs support the `release` option — refer to your SDK's documentation for details.
+
 ## Architecture
 
 Workers Sentinel is built with modern web technologies:
@@ -258,7 +280,7 @@ Each project has its own isolated Durable Object with SQLite storage, ensuring d
 Planned features for future releases:
 
 - [ ] Source map support for JavaScript errors
-- [ ] Release tracking and deployment correlation
+- [x] Release tracking and deployment correlation
 - [ ] Performance monitoring (transactions, spans)
 - [ ] Alerting integrations (webhook, email)
 - [ ] Session replay support
