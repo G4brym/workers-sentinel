@@ -605,8 +605,9 @@ export class ProjectState extends DurableObject<Env> {
 		const params: (string | number)[] = [key];
 
 		if (query) {
-			sql += ' AND value LIKE ?';
-			params.push(`%${query}%`);
+			sql += " AND value LIKE ? ESCAPE '\\'";
+			const escaped = query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+			params.push(`%${escaped}%`);
 		}
 
 		sql += ' GROUP BY value ORDER BY issue_count DESC LIMIT ?';

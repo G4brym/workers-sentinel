@@ -98,6 +98,11 @@ async function loadTagFacets() {
 	}
 }
 
+function getSelectedTagValue(key: string): string {
+	const tag = selectedTags.value.find((t) => t.startsWith(`${key}:`));
+	return tag ? tag.slice(key.length + 1) : '';
+}
+
 function toggleTag(key: string, value: string) {
 	if (value) {
 		selectedTags.value = selectedTags.value.filter((t) => !t.startsWith(`${key}:`));
@@ -178,6 +183,7 @@ watch(slug, () => loadIssues());
 				v-for="facet in tagFacets"
 				:key="facet.key"
 				class="input w-auto"
+				:value="getSelectedTagValue(facet.key)"
 				@change="toggleTag(facet.key, ($event.target as HTMLSelectElement).value)"
 			>
 				<option value="">{{ facet.key }}</option>
