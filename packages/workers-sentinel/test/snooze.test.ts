@@ -1,4 +1,4 @@
-import { SELF } from 'cloudflare:test';
+import { env, runDurableObjectAlarm, SELF } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { authFetch, createTestProject, createTestUser, sendTestEvent } from './utils';
 
@@ -206,6 +206,23 @@ describe('Issue Snooze', () => {
 		});
 	});
 
+	describe('Snooze non-existent issue', () => {
+		it('should return 404 when snoozing a non-existent issue', async () => {
+			const response = await authFetch(
+				testUser.token!,
+				`http://localhost/api/projects/${testProject.slug}/issues/non-existent-id/snooze`,
+				{
+					method: 'POST',
+					body: JSON.stringify({ duration: '1d' }),
+				},
+			);
+
+			expect(response.status).toBe(404);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('issue_not_found');
+		});
+	});
+
 	describe('Unauthenticated requests', () => {
 		it('should reject unauthenticated snooze request', async () => {
 			const response = await SELF.fetch(
@@ -229,6 +246,46 @@ describe('Issue Snooze', () => {
 			);
 
 			expect(response.status).toBe(401);
+		});
+	});
+
+	describe('Alarm handler', () => {
+		it('should clear snoozedUntil for expired issues when alarm fires', async () => {
+			// Set a past snooze time directly via the DO (bypassing route validation)
+			const projectStateId = env.PROJECT_STATE.idFromName(testProject.id);
+			const projectState = env.PROJECT_STATE.get(projectStateId);
+
+			const pastTime = new Date(Date.now() - 60 * 1000).toISOString();
+			await projectState.fetch(
+				new Request('http://internal/issue/snooze', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ issueId: testIssueId, duration: pastTime }),
+				}),
+			);
+
+			// Verify snoozedUntil is set (even though expired, it's still non-null)
+			const beforeResponse = await authFetch(
+				testUser.token!,
+				`http://localhost/api/projects/${testProject.slug}/issues/${testIssueId}`,
+			);
+			const beforeData = (await beforeResponse.json()) as {
+				issue: { id: string; snoozedUntil: string | null };
+			};
+			expect(beforeData.issue.snoozedUntil).not.toBeNull();
+
+			// Trigger the alarm — should clear expired snoozedUntil values
+			await runDurableObjectAlarm(projectState);
+
+			// Verify snoozedUntil is now NULL
+			const afterResponse = await authFetch(
+				testUser.token!,
+				`http://localhost/api/projects/${testProject.slug}/issues/${testIssueId}`,
+			);
+			const afterData = (await afterResponse.json()) as {
+				issue: { id: string; snoozedUntil: string | null };
+			};
+			expect(afterData.issue.snoozedUntil).toBeNull();
 		});
 	});
 });

@@ -116,14 +116,12 @@ issueRoutes.get('/:slug/issues', async (c) => {
 	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
 	const projectState = c.env.PROJECT_STATE.get(projectStateId);
 
-	const isSnoozedFilter = status === 'snoozed';
-
 	const response = await projectState.fetch(
 		new Request('http://internal/issues', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				status: isSnoozedFilter ? 'snoozed' : status,
+				status,
 				level,
 				environment,
 				query,

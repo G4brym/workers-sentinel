@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
@@ -89,6 +89,13 @@ const activity = ref<Activity[]>([]);
 const newComment = ref('');
 const submittingComment = ref(false);
 const showSnoozeMenu = ref(false);
+const snoozeDropdownRef = ref<HTMLElement | null>(null);
+
+function handleClickOutside(event: MouseEvent) {
+	if (snoozeDropdownRef.value && !snoozeDropdownRef.value.contains(event.target as Node)) {
+		showSnoozeMenu.value = false;
+	}
+}
 
 const isSnoozed = computed(
 	() => issue.value?.snoozedUntil && new Date(issue.value.snoozedUntil) > new Date(),
@@ -223,7 +230,14 @@ function getLevelClass(level: string): string {
 	}
 }
 
-onMounted(() => loadIssue());
+onMounted(() => {
+	loadIssue();
+	document.addEventListener('click', handleClickOutside);
+});
+
+onBeforeUnmount(() => {
+	document.removeEventListener('click', handleClickOutside);
+});
 </script>
 
 <template>
@@ -284,7 +298,7 @@ onMounted(() => loadIssue());
 					</button>
 
 					<!-- Snooze dropdown -->
-					<div class="relative">
+					<div ref="snoozeDropdownRef" class="relative">
 						<button
 							v-if="!isSnoozed"
 							class="btn btn-secondary"
