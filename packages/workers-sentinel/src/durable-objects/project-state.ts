@@ -785,8 +785,9 @@ export class ProjectState extends DurableObject<Env> {
 		}));
 
 		return this.jsonResponse({ environments });
+	}
 
-		private handleGetSummary(): Response {
+	private async handleGetSummary(): Promise<Response> {
 		const now = new Date();
 		const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 		const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -827,7 +828,7 @@ export class ProjectState extends DurableObject<Env> {
 		const topIssueRows = this.sql
 			.exec(
 				`SELECT * FROM issues WHERE status = 'unresolved'
-				 ORDER BY count DESC LIMIT 5`,
+				 ORDER BY issues.count DESC LIMIT 5`,
 			)
 			.toArray();
 

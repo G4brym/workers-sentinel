@@ -135,13 +135,13 @@ watch(slug, () => loadSummary());
 					No events recorded yet
 				</div>
 
-				<div v-else class="h-48">
-					<svg class="w-full h-full" :viewBox="`0 0 ${summary.trend.length * 5 + 40} 200`" preserveAspectRatio="none">
+				<div v-else class="h-48 overflow-hidden">
+					<svg class="w-full h-full" :viewBox="`0 0 ${summary.trend.length * 5 + 40} 200`" preserveAspectRatio="xMinYMin meet">
 						<!-- Y-axis labels -->
-						<text x="0" y="15" class="text-[10px]" fill="currentColor" opacity="0.4">
+						<text x="0" y="15" font-size="10" fill="currentColor" opacity="0.4">
 							{{ maxTrendCount }}
 						</text>
-						<text x="0" y="185" class="text-[10px]" fill="currentColor" opacity="0.4">0</text>
+						<text x="0" y="185" font-size="10" fill="currentColor" opacity="0.4">0</text>
 
 						<!-- Bars -->
 						<g :transform="`translate(35, 0)`">
@@ -187,7 +187,7 @@ watch(slug, () => loadSummary());
 										{{ issue.level }}
 									</span>
 									<h3 class="text-sm font-medium text-gray-900 dark:text-white truncate">
-										{{ issue.metadata.type }}
+										{{ issue.metadata.type || issue.title }}
 									</h3>
 								</div>
 								<p class="mt-1 text-sm text-gray-600 dark:text-gray-300 truncate">
