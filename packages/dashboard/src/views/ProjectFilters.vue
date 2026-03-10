@@ -210,6 +210,9 @@ onMounted(() => loadFilters());
 						<template v-if="newFilter.filterType === 'ip_address' || newFilter.filterType === 'release'">
 							Exact match
 						</template>
+						<template v-else-if="newFilter.filterType === 'environment'">
+							Case-insensitive exact match
+						</template>
 						<template v-else>
 							Case-insensitive substring match
 						</template>
