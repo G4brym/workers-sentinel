@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authMiddleware } from './middleware/auth';
-<<<<<<< HEAD
 import { adminRoutes } from './routes/admin';
 import { authRoutes, tokenRoutes } from './routes/auth';
 import { eventRoutes } from './routes/events';

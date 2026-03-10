@@ -95,6 +95,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **✅ Issue Management**: Mark issues as resolved or ignored
 - **🌍 Environment Filtering**: View errors from specific environments (production, staging, development) separately
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
+- **👥 Team Management**: Add members to projects with role-based access control (owner/admin/member)
 - **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint
 - **⚡ Rate Limiting**: Configurable per-project event quotas to prevent runaway error loops from overwhelming the system
 - **🗑️ Data Retention**: Configurable per-project retention policies with automatic cleanup
@@ -283,6 +284,25 @@ The `text` field is formatted for direct use with Slack Incoming Webhooks. For D
 - Delivery is best-effort — failures are logged but not retried
 - Webhook requests are sent asynchronously and never slow down event ingestion
 
+## Managing Team Members
+
+Workers Sentinel supports sharing projects with other registered users through role-based access control.
+
+### Roles
+
+- **Owner** — The project creator. Full access, cannot be removed or changed.
+- **Admin** — Can manage members (add, remove, change roles) and update project settings.
+- **Member** — Can view the project, its issues, and events.
+
+### Adding Members
+
+1. Go to **Project Settings** in the dashboard
+2. Scroll to the **Team Members** section
+3. Enter the user's email address and select a role
+4. Click **Add**
+
+Users must register an account before they can be added to a project. There is no invitation system — members are added by their registered email address.
+
 ## API Tokens
 
 API tokens allow programmatic access to the Workers Sentinel API — useful for CI/CD pipelines, scripts, custom dashboards, and integrations with incident management tools.
@@ -368,7 +388,7 @@ Planned features for future releases:
 - [x] Webhook alerting notifications
 - [ ] Email alerting notifications
 - [ ] Session replay support
-- [ ] Team/organization support
+- [x] Team/organization support
 - [ ] Issue assignment
 - [x] Tag-based search and filtering
 - [ ] Time-series charts
@@ -381,7 +401,7 @@ Planned features for future releases:
 - No source map support yet (stack traces show minified code)
 - No performance monitoring (error tracking only)
 - Email notifications not yet available (webhooks supported)
-- Single-user admin (no team management yet)
+- No project ownership transfer (creator remains permanent owner)
 
 **Sentry Feature Parity:**
 Workers Sentinel focuses on core error tracking. Advanced Sentry features like:
