@@ -130,6 +130,14 @@ async function handleIngestion(c: Context<{ Bindings: Env }>): Promise<Response>
 				}),
 			);
 
+			if (response.status === 429) {
+				const retryAfter = response.headers.get('Retry-After') || '3600';
+				return c.json(
+					{ error: 'rate_limited', message: 'Project event quota exceeded' },
+					{ status: 429, headers: { 'Retry-After': retryAfter } },
+				);
+			}
+
 			if (response.ok) {
 				const result = await response.json();
 				results.push(result);
