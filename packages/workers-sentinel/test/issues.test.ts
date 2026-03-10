@@ -442,6 +442,51 @@ describe('Issues Routes', () => {
 			expect(data.error).toBe('invalid_status');
 		});
 
+		it('should return 400 when too many issue IDs are provided', async () => {
+			const user = await createTestUser({
+				email: `bulk-limit-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk Limit User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk Limit Project' });
+
+			const tooManyIds = Array.from({ length: 101 }, (_, i) => `fake-id-${i}`);
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: tooManyIds, status: 'resolved' }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('too_many_issues');
+		});
+
+		it('should return 400 when no action or status is provided', async () => {
+			const user = await createTestUser({
+				email: `bulk-noaction-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk No Action User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk No Action Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: ['some-id'] }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('no_action');
+		});
+
 		it('should reject unauthenticated requests', async () => {
 			const response = await SELF.fetch('http://localhost/api/projects/some-project/issues/bulk', {
 				method: 'PATCH',

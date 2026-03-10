@@ -506,17 +506,20 @@ export class ProjectState extends DurableObject<Env> {
 		const placeholders = issueIds.map(() => '?').join(', ');
 
 		if (action === 'delete') {
-			this.sql.exec(`DELETE FROM issues WHERE id IN (${placeholders})`, ...issueIds);
-			return this.jsonResponse({ success: true, affected: issueIds.length });
+			const cursor = this.sql.exec(
+				`DELETE FROM issues WHERE id IN (${placeholders})`,
+				...issueIds,
+			);
+			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
 		}
 
 		if (status) {
-			this.sql.exec(
+			const cursor = this.sql.exec(
 				`UPDATE issues SET status = ? WHERE id IN (${placeholders})`,
 				status,
 				...issueIds,
 			);
-			return this.jsonResponse({ success: true, affected: issueIds.length });
+			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
 		}
 
 		return this.jsonResponse({ error: 'no_action' }, 400);
