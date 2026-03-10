@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
+import { useAuthStore } from '../stores/auth';
 import { useProjectsStore } from '../stores/projects';
 
 interface Project {
@@ -14,8 +15,17 @@ interface Project {
 	createdAt: string;
 }
 
+interface ProjectMember {
+	userId: string;
+	email: string;
+	name: string;
+	role: 'owner' | 'admin' | 'member';
+	createdAt: string;
+}
+
 const route = useRoute();
 const router = useRouter();
+const authStore = useAuthStore();
 const projectsStore = useProjectsStore();
 const slug = computed(() => route.params.slug as string);
 
@@ -38,6 +48,26 @@ const retentionDays = ref<number>(0);
 const savingRetention = ref(false);
 const retentionSaved = ref(false);
 
+// Members state
+const members = ref<ProjectMember[]>([]);
+const membersLoading = ref(false);
+const membersError = ref<string | null>(null);
+const newMemberEmail = ref('');
+const newMemberRole = ref<'admin' | 'member'>('member');
+const addingMember = ref(false);
+const showRemoveConfirm = ref<string | null>(null);
+const removingMember = ref(false);
+
+const currentUserRole = computed(() => {
+	if (!authStore.user) return null;
+	const me = members.value.find((m) => m.userId === authStore.user!.id);
+	return me?.role || null;
+});
+
+const canManageMembers = computed(() => {
+	return currentUserRole.value === 'owner' || currentUserRole.value === 'admin';
+});
+
 async function loadProject() {
 	loading.value = true;
 	error.value = null;
@@ -58,6 +88,71 @@ async function loadProject() {
 		error.value = err instanceof Error ? err.message : 'Failed to load project';
 	} finally {
 		loading.value = false;
+	}
+}
+
+async function loadMembers() {
+	membersLoading.value = true;
+	membersError.value = null;
+
+	try {
+		const response = await api.get<{ members: ProjectMember[] }>(
+			`/api/projects/${slug.value}/members`,
+		);
+		members.value = response.members;
+	} catch (err) {
+		membersError.value = err instanceof Error ? err.message : 'Failed to load members';
+	} finally {
+		membersLoading.value = false;
+	}
+}
+
+async function addMember() {
+	if (!newMemberEmail.value) return;
+
+	addingMember.value = true;
+	membersError.value = null;
+
+	try {
+		await api.post(`/api/projects/${slug.value}/members`, {
+			email: newMemberEmail.value,
+			role: newMemberRole.value,
+		});
+		newMemberEmail.value = '';
+		newMemberRole.value = 'member';
+		await loadMembers();
+	} catch (err) {
+		if (err instanceof ApiError) {
+			membersError.value = err.message;
+		} else {
+			membersError.value = err instanceof Error ? err.message : 'Failed to add member';
+		}
+	} finally {
+		addingMember.value = false;
+	}
+}
+
+async function updateMemberRole(userId: string, role: string) {
+	membersError.value = null;
+	try {
+		await api.patch(`/api/projects/${slug.value}/members/${userId}`, { role });
+		await loadMembers();
+	} catch (err) {
+		membersError.value = err instanceof Error ? err.message : 'Failed to update member role';
+	}
+}
+
+async function removeMember(userId: string) {
+	removingMember.value = true;
+	membersError.value = null;
+	try {
+		await api.delete(`/api/projects/${slug.value}/members/${userId}`);
+		showRemoveConfirm.value = null;
+		await loadMembers();
+	} catch (err) {
+		membersError.value = err instanceof Error ? err.message : 'Failed to remove member';
+	} finally {
+		removingMember.value = false;
 	}
 }
 
@@ -181,6 +276,7 @@ function formatDate(dateString: string): string {
 onMounted(() => {
 	loadProject();
 	loadRateLimitStatus();
+	loadMembers();
 });
 </script>
 
@@ -250,6 +346,125 @@ onMounted(() => {
 						<dd class="text-gray-900 dark:text-white font-mono text-sm">{{ project.id }}</dd>
 					</div>
 				</dl>
+			</div>
+
+			<!-- Team Members -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Team Members</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Manage who has access to this project and their roles.
+				</p>
+
+				<!-- Members error -->
+				<div
+					v-if="membersError"
+					class="bg-error-50 dark:bg-error-900/20 text-error-700 dark:text-error-400 px-4 py-3 rounded-lg mb-4"
+				>
+					{{ membersError }}
+				</div>
+
+				<!-- Members loading -->
+				<div v-if="membersLoading && members.length === 0" class="text-center py-4">
+					<div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto"></div>
+				</div>
+
+				<!-- Members list -->
+				<div v-else class="space-y-3 mb-4">
+					<div
+						v-for="member in members"
+						:key="member.userId"
+						class="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
+					>
+						<div class="flex items-center space-x-3 min-w-0">
+							<div class="min-w-0">
+								<div class="text-sm font-medium text-gray-900 dark:text-white truncate">
+									{{ member.name }}
+								</div>
+								<div class="text-xs text-gray-500 truncate">{{ member.email }}</div>
+							</div>
+						</div>
+
+						<div class="flex items-center space-x-2 flex-shrink-0">
+							<!-- Owner badge (non-editable) -->
+							<span
+								v-if="member.role === 'owner'"
+								class="inline-flex items-center px-2 py-1 text-xs font-medium rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300"
+							>
+								Owner
+							</span>
+
+							<!-- Role dropdown for non-owners (only if current user can manage) -->
+							<template v-else>
+								<select
+									v-if="canManageMembers"
+									:value="member.role"
+									class="text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-gray-900 dark:text-gray-100"
+									@change="updateMemberRole(member.userId, ($event.target as HTMLSelectElement).value)"
+								>
+									<option value="admin">Admin</option>
+									<option value="member">Member</option>
+								</select>
+								<span
+									v-else
+									class="inline-flex items-center px-2 py-1 text-xs font-medium rounded-full bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300"
+								>
+									{{ member.role === 'admin' ? 'Admin' : 'Member' }}
+								</span>
+
+								<!-- Remove button -->
+								<button
+									v-if="canManageMembers"
+									class="text-gray-400 hover:text-error-600 dark:hover:text-error-400 p-1"
+									title="Remove member"
+									@click="showRemoveConfirm = member.userId"
+								>
+									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+									</svg>
+								</button>
+							</template>
+						</div>
+					</div>
+
+					<div v-if="members.length === 0 && !membersLoading" class="text-sm text-gray-500 text-center py-4">
+						No members found.
+					</div>
+				</div>
+
+				<!-- Add member form (only for owner/admin) -->
+				<div v-if="canManageMembers" class="border-t border-gray-200 dark:border-gray-600 pt-4">
+					<h3 class="text-sm font-medium text-gray-900 dark:text-white mb-3">Add Member</h3>
+					<div class="flex items-end space-x-2">
+						<div class="flex-1">
+							<label class="block text-xs text-gray-500 mb-1">Email</label>
+							<input
+								v-model="newMemberEmail"
+								type="email"
+								placeholder="user@example.com"
+								class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+								@keydown.enter="addMember"
+							/>
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Role</label>
+							<select
+								v-model="newMemberRole"
+								class="px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100"
+							>
+								<option value="member">Member</option>
+								<option value="admin">Admin</option>
+							</select>
+						</div>
+						<button
+							class="btn btn-primary"
+							:disabled="addingMember || !newMemberEmail"
+							@click="addMember"
+						>
+							<span v-if="addingMember">Adding...</span>
+							<span v-else>Add</span>
+						</button>
+					</div>
+				</div>
 			</div>
 
 			<!-- Webhook Notifications -->
@@ -430,6 +645,38 @@ onMounted(() => {
 						>
 							<span v-if="deleting">Deleting...</span>
 							<span v-else>Delete Project</span>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Remove member confirmation modal -->
+			<div
+				v-if="showRemoveConfirm"
+				class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+				@click.self="showRemoveConfirm = null"
+			>
+				<div class="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md mx-4">
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+						Remove member?
+					</h3>
+					<p class="text-sm text-gray-500 mb-6">
+						This user will lose access to this project. They can be re-added later.
+					</p>
+					<div class="flex justify-end space-x-3">
+						<button
+							class="btn btn-secondary"
+							@click="showRemoveConfirm = null"
+						>
+							Cancel
+						</button>
+						<button
+							class="btn btn-danger"
+							:disabled="removingMember"
+							@click="removeMember(showRemoveConfirm!)"
+						>
+							<span v-if="removingMember">Removing...</span>
+							<span v-else>Remove</span>
 						</button>
 					</div>
 				</div>
