@@ -83,6 +83,42 @@ issueRoutes.get('/:slug/issues', async (c) => {
 	return c.json(data);
 });
 
+// Bulk update issues
+// PATCH /api/projects/:slug/issues/bulk
+issueRoutes.patch('/:slug/issues/bulk', async (c) => {
+	const slug = c.req.param('slug');
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+	const body = await c.req.json<{
+		issueIds: string[];
+		status?: string;
+		action?: 'delete';
+	}>();
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issues/bulk-update', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				issueIds: body.issueIds,
+				status: body.status,
+				action: body.action,
+			}),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data, response.status as 200 | 400);
+});
+
 // Get a specific issue
 // GET /api/projects/:slug/issues/:issueId
 issueRoutes.get('/:slug/issues/:issueId', async (c) => {
