@@ -93,6 +93,15 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS issue_environments (
+  issue_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  event_count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (issue_id, environment),
+  FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
 `;
 
 export class ProjectState extends DurableObject<Env> {
@@ -164,6 +173,8 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetSettings();
 				case '/settings/update':
 					return this.handleUpdateSettings(request);
+				case '/environments':
+					return this.handleGetEnvironments();
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -306,6 +317,34 @@ export class ProjectState extends DurableObject<Env> {
 			'INSERT INTO rate_limit_counters (bucket, count) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1',
 			currentBucket,
 		);
+		// Track environment
+		const environment = event.environment || null;
+		if (environment) {
+			const existingEnv = this.sql
+				.exec(
+					'SELECT issue_id FROM issue_environments WHERE issue_id = ? AND environment = ?',
+					issueId,
+					environment,
+				)
+				.toArray();
+
+			if (existingEnv.length > 0) {
+				this.sql.exec(
+					'UPDATE issue_environments SET last_seen = ?, event_count = event_count + 1 WHERE issue_id = ? AND environment = ?',
+					now,
+					issueId,
+					environment,
+				);
+			} else {
+				this.sql.exec(
+					'INSERT INTO issue_environments (issue_id, environment, first_seen, last_seen, event_count) VALUES (?, ?, ?, ?, 1)',
+					issueId,
+					environment,
+					now,
+					now,
+				);
+			}
+		}
 
 		// Track unique users
 		if (event.user) {
@@ -360,9 +399,10 @@ export class ProjectState extends DurableObject<Env> {
 	]);
 
 	private async handleGetIssues(request: Request): Promise<Response> {
-		const { status, level, query, sort, cursor, limit, tags } = (await request.json()) as {
+		const { status, level, environment, query, sort, cursor, limit, tags } = (await request.json()) as {
 			status?: string;
 			level?: string;
+			environment?: string;
 			query?: string;
 			sort?: string;
 			cursor?: string;
@@ -385,6 +425,11 @@ export class ProjectState extends DurableObject<Env> {
 		if (level) {
 			sql += ' AND level = ?';
 			params.push(level);
+		}
+
+		if (environment) {
+			sql += ' AND id IN (SELECT issue_id FROM issue_environments WHERE environment = ?)';
+			params.push(environment);
 		}
 
 		if (query) {
@@ -730,6 +775,25 @@ export class ProjectState extends DurableObject<Env> {
 		}));
 
 		return this.jsonResponse({ key, values });
+	}
+
+	private handleGetEnvironments(): Response {
+		const rows = this.sql
+			.exec(
+				`SELECT environment, COUNT(DISTINCT issue_id) as issue_count, MAX(last_seen) as last_seen
+			 FROM issue_environments
+			 GROUP BY environment
+			 ORDER BY last_seen DESC`,
+			)
+			.toArray();
+
+		const environments = rows.map((row) => ({
+			name: row.environment as string,
+			issueCount: row.issue_count as number,
+			lastSeen: row.last_seen as string,
+		}));
+
+		return this.jsonResponse({ environments });
 	}
 
 	private getHourBucket(timestamp: string): string {
