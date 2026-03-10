@@ -105,7 +105,10 @@ async function testWebhook() {
 			webhookTested.value = false;
 		}, 3000);
 	} catch (err) {
-		error.value = err instanceof Error ? err.message : 'Failed to send test webhook. Check the URL and try again.';
+		error.value =
+			err instanceof Error
+				? err.message
+				: 'Failed to send test webhook. Check the URL and try again.';
 	} finally {
 		testingWebhook.value = false;
 	}

@@ -58,13 +58,13 @@ export function extractTitle(event: SentryEvent): string {
 		const value = exc.value || '';
 
 		// Truncate long messages
-		const truncatedValue = value.length > 100 ? value.slice(0, 97) + '...' : value;
+		const truncatedValue = value.length > 100 ? `${value.slice(0, 97)}...` : value;
 
 		return `${type}: ${truncatedValue}`;
 	}
 
 	if (event.message) {
-		return event.message.length > 128 ? event.message.slice(0, 125) + '...' : event.message;
+		return event.message.length > 128 ? `${event.message.slice(0, 125)}...` : event.message;
 	}
 
 	return 'Unknown Error';

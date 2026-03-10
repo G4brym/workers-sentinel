@@ -543,9 +543,7 @@ describe('Issues Routes', () => {
 					type: 'ReferenceError',
 					value: 'No env error',
 					stacktrace: {
-						frames: [
-							{ filename: 'noenv.js', function: 'test', lineno: 1, in_app: true },
-						],
+						frames: [{ filename: 'noenv.js', function: 'test', lineno: 1, in_app: true }],
 					},
 				},
 			});
@@ -609,6 +607,37 @@ describe('Issues Routes', () => {
 				expect(env.issueCount).toBe(1);
 				expect(env.lastSeen).toBeDefined();
 			}
+		});
+
+		it('should return same issue when it appears in multiple environments', async () => {
+			// Send same exception type/value to both production and staging
+			await sendTestEvent(envProject.id, envProject.publicKey, {
+				exception: { type: 'Error', value: 'Prod error 1' },
+				environment: 'staging',
+			});
+
+			// The issue should now appear in both environments
+			const prodResponse = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?environment=production`,
+			);
+			const prodData = (await prodResponse.json()) as {
+				issues: Array<{ id: string; title: string }>;
+			};
+
+			const stagingResponse = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?environment=staging`,
+			);
+			const stagingData = (await stagingResponse.json()) as {
+				issues: Array<{ id: string; title: string }>;
+			};
+
+			// The "Prod error 1" issue should appear in both environment filters
+			const prodIssueIds = prodData.issues.map((i) => i.id);
+			const stagingIssueIds = stagingData.issues.map((i) => i.id);
+			const sharedIssues = prodIssueIds.filter((id) => stagingIssueIds.includes(id));
+			expect(sharedIssues.length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('should track environment counts correctly', async () => {

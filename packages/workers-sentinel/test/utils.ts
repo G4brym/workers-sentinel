@@ -1,4 +1,4 @@
-import { env, SELF } from 'cloudflare:test';
+import { SELF } from 'cloudflare:test';
 
 export interface TestUser {
 	email: string;

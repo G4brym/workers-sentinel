@@ -320,30 +320,17 @@ export class ProjectState extends DurableObject<Env> {
 		// Track environment
 		const environment = event.environment || null;
 		if (environment) {
-			const existingEnv = this.sql
-				.exec(
-					'SELECT issue_id FROM issue_environments WHERE issue_id = ? AND environment = ?',
-					issueId,
-					environment,
-				)
-				.toArray();
-
-			if (existingEnv.length > 0) {
-				this.sql.exec(
-					'UPDATE issue_environments SET last_seen = ?, event_count = event_count + 1 WHERE issue_id = ? AND environment = ?',
-					now,
-					issueId,
-					environment,
-				);
-			} else {
-				this.sql.exec(
-					'INSERT INTO issue_environments (issue_id, environment, first_seen, last_seen, event_count) VALUES (?, ?, ?, ?, 1)',
-					issueId,
-					environment,
-					now,
-					now,
-				);
-			}
+			this.sql.exec(
+				`INSERT INTO issue_environments (issue_id, environment, first_seen, last_seen, event_count)
+				 VALUES (?, ?, ?, ?, 1)
+				 ON CONFLICT (issue_id, environment) DO UPDATE SET
+				   last_seen = excluded.last_seen,
+				   event_count = event_count + 1`,
+				issueId,
+				environment,
+				now,
+				now,
+			);
 		}
 
 		// Track unique users

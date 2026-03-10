@@ -1,9 +1,9 @@
 import { SELF } from 'cloudflare:test';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { createTestUser, loginUser } from './utils';
+import { describe, expect, it } from 'vitest';
+import { createTestUser } from './utils';
 
 // Helper to retry requests that might fail due to DO reset
-async function fetchWithRetry(url: string, options: RequestInit, retries = 5): Promise<Response> {
+async function _fetchWithRetry(url: string, options: RequestInit, retries = 5): Promise<Response> {
 	for (let i = 0; i < retries; i++) {
 		try {
 			const response = await SELF.fetch(url, options);
