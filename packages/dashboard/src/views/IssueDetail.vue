@@ -15,6 +15,7 @@ interface Issue {
 	count: number;
 	userCount: number;
 	status: string;
+	snoozedUntil: string | null;
 	metadata: {
 		type: string;
 		value: string;
@@ -87,6 +88,35 @@ const expandedFrames = ref<Set<number>>(new Set());
 const activity = ref<Activity[]>([]);
 const newComment = ref('');
 const submittingComment = ref(false);
+const showSnoozeMenu = ref(false);
+
+const isSnoozed = computed(
+	() => issue.value?.snoozedUntil && new Date(issue.value.snoozedUntil) > new Date(),
+);
+
+async function snoozeIssue(duration: string) {
+	if (!issue.value) return;
+	try {
+		const response = await api.post<{ issue: Issue }>(
+			`/api/projects/${slug.value}/issues/${issueId.value}/snooze`,
+			{ duration },
+		);
+		issue.value.snoozedUntil = response.issue.snoozedUntil;
+	} catch (err) {
+		console.error('Failed to snooze issue:', err);
+	}
+	showSnoozeMenu.value = false;
+}
+
+async function unsnoozeIssue() {
+	if (!issue.value) return;
+	try {
+		await api.delete(`/api/projects/${slug.value}/issues/${issueId.value}/snooze`);
+		issue.value.snoozedUntil = null;
+	} catch (err) {
+		console.error('Failed to unsnooze issue:', err);
+	}
+}
 
 async function loadIssue() {
 	loading.value = true;
@@ -252,6 +282,53 @@ onMounted(() => loadIssue());
 					>
 						Reopen
 					</button>
+
+					<!-- Snooze dropdown -->
+					<div class="relative">
+						<button
+							v-if="!isSnoozed"
+							class="btn btn-secondary"
+							@click="showSnoozeMenu = !showSnoozeMenu"
+						>
+							Snooze
+						</button>
+						<button
+							v-else
+							class="btn btn-secondary"
+							@click="unsnoozeIssue()"
+						>
+							Unsnooze
+						</button>
+						<div
+							v-if="showSnoozeMenu"
+							class="absolute left-0 mt-1 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10"
+						>
+							<button
+								class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-t-lg"
+								@click="snoozeIssue('1h')"
+							>
+								1 hour
+							</button>
+							<button
+								class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+								@click="snoozeIssue('1d')"
+							>
+								1 day
+							</button>
+							<button
+								class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+								@click="snoozeIssue('3d')"
+							>
+								3 days
+							</button>
+							<button
+								class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-b-lg"
+								@click="snoozeIssue('1w')"
+							>
+								1 week
+							</button>
+						</div>
+					</div>
 				</div>
 
 				<div class="flex items-center space-x-6 text-sm text-gray-500">
@@ -267,6 +344,20 @@ onMounted(() => loadIssue());
 						First seen <span class="font-medium text-gray-900 dark:text-white">{{ formatTime(issue.firstSeen) }}</span>
 					</div>
 				</div>
+			</div>
+
+			<!-- Snooze banner -->
+			<div
+				v-if="isSnoozed"
+				class="mb-4 flex items-center justify-between bg-warning-50 dark:bg-warning-900/20 text-warning-700 dark:text-warning-400 px-4 py-3 rounded-lg"
+			>
+				<span>Snoozed until {{ formatTime(issue.snoozedUntil!) }}</span>
+				<button
+					class="text-sm font-medium hover:underline"
+					@click="unsnoozeIssue()"
+				>
+					Unsnooze
+				</button>
 			</div>
 
 			<!-- Event selector -->
