@@ -79,6 +79,11 @@ const router = createRouter({
 					name: 'api-tokens',
 					component: () => import('../views/ApiTokens.vue'),
 				},
+				{
+					path: 'projects/:slug/filters',
+					name: 'project-filters',
+					component: () => import('../views/ProjectFilters.vue'),
+				},
 			],
 		},
 	],

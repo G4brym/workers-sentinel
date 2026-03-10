@@ -5,7 +5,7 @@ import {
 	extractTitle,
 	generateFingerprint,
 } from '../lib/fingerprint';
-import type { Env, Issue, ProjectSettings, SentryEvent } from '../types';
+import type { Env, FilterType, InboundFilter, Issue, ProjectSettings, SentryEvent } from '../types';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -158,6 +158,15 @@ CREATE TABLE IF NOT EXISTS source_maps (
   UNIQUE(release, file_url)
 );
 CREATE INDEX IF NOT EXISTS idx_source_maps_release ON source_maps(release);
+CREATE TABLE IF NOT EXISTS inbound_filters (
+  id TEXT PRIMARY KEY,
+  filter_type TEXT NOT NULL,
+  pattern TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  description TEXT,
+  dropped_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 `;
 
 const MIGRATIONS = `
@@ -264,6 +273,14 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetSourceMap(request);
 				case '/sourcemaps/delete':
 					return this.handleDeleteSourceMap(request);
+				case '/filters':
+					return this.handleGetFilters();
+				case '/filters/create':
+					return this.handleCreateFilter(request);
+				case '/filters/update':
+					return this.handleUpdateFilter(request);
+				case '/filters/delete':
+					return this.handleDeleteFilter(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -307,6 +324,19 @@ export class ProjectState extends DurableObject<Env> {
 		// Generate fingerprint
 		const fingerprint = generateFingerprint(event);
 
+		// Check inbound filters
+		const enabledFilters = this.sql
+			.exec('SELECT * FROM inbound_filters WHERE enabled = 1')
+			.toArray();
+
+		const matchedFilterId = this.shouldFilterEvent(event, enabledFilters);
+		if (matchedFilterId) {
+			this.sql.exec(
+				'UPDATE inbound_filters SET dropped_count = dropped_count + 1 WHERE id = ?',
+				matchedFilterId,
+			);
+			return this.jsonResponse({ filtered: true, eventId });
+		}
 		// Check for existing issue
 		const existingRows = this.sql
 			.exec('SELECT id, count, status FROM issues WHERE fingerprint = ?', fingerprint)
@@ -947,6 +977,8 @@ export class ProjectState extends DurableObject<Env> {
 		}));
 
 		return this.jsonResponse({ key, values });
+	}
+
 	private async handleGetReleases(request: Request): Promise<Response> {
 		const { cursor, limit } = (await request.json()) as {
 			cursor?: string;
@@ -1319,6 +1351,182 @@ export class ProjectState extends DurableObject<Env> {
 
 		const row = this.sql.exec('SELECT * FROM issues WHERE id = ?', issueId).one();
 		return this.jsonResponse({ issue: row ? this.rowToIssue(row) : null });
+	}
+
+	private static readonly VALID_FILTER_TYPES = new Set([
+		'message',
+		'error_type',
+		'ip_address',
+		'release',
+		'environment',
+	]);
+
+	private shouldFilterEvent(
+		event: SentryEvent,
+		filters: Array<Record<string, SqlStorageValue>>,
+	): string | null {
+		for (const filter of filters) {
+			const filterType = filter.filter_type as string;
+			const pattern = (filter.pattern as string).toLowerCase();
+			let matched = false;
+
+			switch (filterType) {
+				case 'message': {
+					const message = (
+						event.exception?.values?.[0]?.value ||
+						event.message ||
+						''
+					).toLowerCase();
+					matched = message.includes(pattern);
+					break;
+				}
+				case 'error_type': {
+					const type = (event.exception?.values?.[0]?.type || '').toLowerCase();
+					matched = type.includes(pattern);
+					break;
+				}
+				case 'ip_address': {
+					matched = event.user?.ip_address === filter.pattern;
+					break;
+				}
+				case 'release': {
+					matched = (event.release || '') === filter.pattern;
+					break;
+				}
+				case 'environment': {
+					matched = (event.environment || '').toLowerCase() === pattern;
+					break;
+				}
+			}
+
+			if (matched) {
+				return filter.id as string;
+			}
+		}
+		return null;
+	}
+
+	private handleGetFilters(): Response {
+		const rows = this.sql.exec('SELECT * FROM inbound_filters ORDER BY created_at DESC').toArray();
+		const filters = rows.map((row) => this.rowToFilter(row));
+		return this.jsonResponse({ filters });
+	}
+
+	private async handleCreateFilter(request: Request): Promise<Response> {
+		const { filterType, pattern, description } = (await request.json()) as {
+			filterType: string;
+			pattern: string;
+			description?: string;
+		};
+
+		if (!filterType || !ProjectState.VALID_FILTER_TYPES.has(filterType)) {
+			return this.jsonResponse(
+				{ error: 'invalid_filter_type', message: 'Invalid filter type' },
+				400,
+			);
+		}
+
+		if (!pattern || pattern.length === 0 || pattern.length > 500) {
+			return this.jsonResponse(
+				{ error: 'invalid_pattern', message: 'Pattern must be 1-500 characters' },
+				400,
+			);
+		}
+
+		// Enforce a limit of 100 filters per project
+		const countRow = this.sql.exec('SELECT COUNT(*) as cnt FROM inbound_filters').one();
+		if (countRow && (countRow.cnt as number) >= 100) {
+			return this.jsonResponse(
+				{ error: 'limit_reached', message: 'Maximum of 100 filters per project' },
+				400,
+			);
+		}
+
+		const id = crypto.randomUUID();
+		const now = new Date().toISOString();
+
+		this.sql.exec(
+			`INSERT INTO inbound_filters (id, filter_type, pattern, enabled, description, dropped_count, created_at)
+			 VALUES (?, ?, ?, 1, ?, 0, ?)`,
+			id,
+			filterType,
+			pattern,
+			description || null,
+			now,
+		);
+
+		const row = this.sql.exec('SELECT * FROM inbound_filters WHERE id = ?', id).one();
+		return this.jsonResponse({ filter: row ? this.rowToFilter(row) : null }, 201);
+	}
+
+	private async handleUpdateFilter(request: Request): Promise<Response> {
+		const { filterId, enabled, pattern, description } = (await request.json()) as {
+			filterId: string;
+			enabled?: boolean;
+			pattern?: string;
+			description?: string | null;
+		};
+
+		if (!filterId) {
+			return this.jsonResponse({ error: 'missing_filter_id' }, 400);
+		}
+
+		const updates: string[] = [];
+		const params: (string | number | null)[] = [];
+
+		if (enabled !== undefined) {
+			updates.push('enabled = ?');
+			params.push(enabled ? 1 : 0);
+		}
+
+		if (pattern !== undefined) {
+			if (pattern.length === 0 || pattern.length > 500) {
+				return this.jsonResponse(
+					{ error: 'invalid_pattern', message: 'Pattern must be 1-500 characters' },
+					400,
+				);
+			}
+			updates.push('pattern = ?');
+			params.push(pattern);
+		}
+
+		if (description !== undefined) {
+			updates.push('description = ?');
+			params.push(description);
+		}
+
+		if (updates.length === 0) {
+			return this.jsonResponse({ error: 'no_updates' }, 400);
+		}
+
+		params.push(filterId);
+		this.sql.exec(`UPDATE inbound_filters SET \${updates.join(', ')} WHERE id = ?`, ...params);
+
+		const row = this.sql.exec('SELECT * FROM inbound_filters WHERE id = ?', filterId).one();
+		return this.jsonResponse({ filter: row ? this.rowToFilter(row) : null });
+	}
+
+	private async handleDeleteFilter(request: Request): Promise<Response> {
+		const { filterId } = (await request.json()) as { filterId: string };
+
+		if (!filterId) {
+			return this.jsonResponse({ error: 'missing_filter_id' }, 400);
+		}
+
+		this.sql.exec('DELETE FROM inbound_filters WHERE id = ?', filterId);
+		return this.jsonResponse({ success: true });
+	}
+
+	private rowToFilter(row: Record<string, SqlStorageValue>): InboundFilter {
+		return {
+			id: row.id as string,
+			filterType: row.filter_type as FilterType,
+			pattern: row.pattern as string,
+			enabled: (row.enabled as number) === 1,
+			description: row.description as string | null,
+			droppedCount: row.dropped_count as number,
+			createdAt: row.created_at as string,
+		};
 	}
 
 	private getHourBucket(timestamp: string): string {
