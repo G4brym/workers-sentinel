@@ -79,6 +79,26 @@ export interface ProjectSettings {
 	retentionDays: number; // 0 = keep forever, otherwise number of days
 }
 
+// Comment and activity types
+export interface IssueComment {
+	id: string;
+	issueId: string;
+	userId: string;
+	userName: string;
+	body: string;
+	createdAt: string;
+}
+
+export interface IssueActivity {
+	id: string;
+	issueId: string;
+	userId: string;
+	userName: string;
+	type: 'comment' | 'status_change';
+	data: Record<string, string>;
+	createdAt: string;
+}
+
 // Sentry event types
 export interface SentryEvent {
 	event_id: string;

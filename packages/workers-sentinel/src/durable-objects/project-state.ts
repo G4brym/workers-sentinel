@@ -103,6 +103,29 @@ CREATE TABLE IF NOT EXISTS issue_environments (
   PRIMARY KEY (issue_id, environment),
   FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS issue_comments (
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_comments_issue ON issue_comments(issue_id);
+
+CREATE TABLE IF NOT EXISTS issue_activity (
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  user_name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_activity_issue ON issue_activity(issue_id);
 `;
 
 export class ProjectState extends DurableObject<Env> {
@@ -178,6 +201,14 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetEnvironments();
 				case '/summary':
 					return this.handleGetSummary();
+				case '/issue/comments':
+					return this.handleGetComments(request);
+				case '/issue/comment/add':
+					return this.handleAddComment(request);
+				case '/issue/comment/delete':
+					return this.handleDeleteComment(request);
+				case '/issue/activity':
+					return this.handleGetActivity(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -495,9 +526,11 @@ export class ProjectState extends DurableObject<Env> {
 	}
 
 	private async handleUpdateIssue(request: Request): Promise<Response> {
-		const { issueId, status } = (await request.json()) as {
+		const { issueId, status, userId, userName } = (await request.json()) as {
 			issueId: string;
 			status?: string;
+			userId?: string;
+			userName?: string;
 		};
 
 		if (!issueId) {
@@ -507,7 +540,11 @@ export class ProjectState extends DurableObject<Env> {
 		const updates: string[] = [];
 		const params: (string | null)[] = [];
 
+		// Get previous status before updating
+		let previousStatus: string | undefined;
 		if (status) {
+			const current = this.sql.exec('SELECT status FROM issues WHERE id = ?', issueId).toArray();
+			previousStatus = current.length > 0 ? (current[0].status as string) : 'unknown';
 			updates.push('status = ?');
 			params.push(status);
 		}
@@ -518,6 +555,22 @@ export class ProjectState extends DurableObject<Env> {
 
 		params.push(issueId);
 		this.sql.exec(`UPDATE issues SET ${updates.join(', ')} WHERE id = ?`, ...params);
+
+		// Record status change activity
+		if (status && previousStatus) {
+			const activityId = crypto.randomUUID();
+			const now = new Date().toISOString();
+			this.sql.exec(
+				`INSERT INTO issue_activity (id, issue_id, user_id, user_name, type, data, created_at)
+				 VALUES (?, ?, ?, ?, 'status_change', ?, ?)`,
+				activityId,
+				issueId,
+				userId || 'system',
+				userName || 'System',
+				JSON.stringify({ from: previousStatus, to: status }),
+				now,
+			);
+		}
 
 		const row = this.sql.exec('SELECT * FROM issues WHERE id = ?', issueId).one();
 		return this.jsonResponse({ issue: row ? this.rowToIssue(row) : null });
@@ -844,7 +897,146 @@ export class ProjectState extends DurableObject<Env> {
 			topIssues,
 			totalUsers: (userCountRow?.count as number) || 0,
 		});
+	private async handleGetComments(request: Request): Promise<Response> {
+		const { issueId } = (await request.json()) as { issueId: string };
+
+		const rows = this.sql
+			.exec('SELECT * FROM issue_comments WHERE issue_id = ? ORDER BY created_at ASC', issueId)
+			.toArray();
+
+		const comments = rows.map((row) => ({
+			id: row.id as string,
+			issueId: row.issue_id as string,
+			userId: row.user_id as string,
+			userName: row.user_name as string,
+			body: row.body as string,
+			createdAt: row.created_at as string,
+		}));
+
+		return this.jsonResponse({ comments });
 	}
+
+	private async handleAddComment(request: Request): Promise<Response> {
+		const { issueId, userId, userName, body } = (await request.json()) as {
+			issueId: string;
+			userId: string;
+			userName: string;
+			body: string;
+		};
+
+		if (!body || body.trim().length === 0) {
+			return this.jsonResponse({ error: 'comment_body_required' }, 400);
+		}
+
+		if (body.length > 2000) {
+			return this.jsonResponse({ error: 'comment_body_too_long' }, 400);
+		}
+
+		const commentId = crypto.randomUUID();
+		const now = new Date().toISOString();
+
+		this.sql.exec(
+			`INSERT INTO issue_comments (id, issue_id, user_id, user_name, body, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			commentId,
+			issueId,
+			userId,
+			userName,
+			body.trim(),
+			now,
+		);
+
+		// Also record activity
+		const activityId = crypto.randomUUID();
+		const preview = body.trim().length > 200 ? `${body.trim().slice(0, 200)}...` : body.trim();
+		this.sql.exec(
+			`INSERT INTO issue_activity (id, issue_id, user_id, user_name, type, data, created_at)
+			 VALUES (?, ?, ?, ?, 'comment', ?, ?)`,
+			activityId,
+			issueId,
+			userId,
+			userName,
+			JSON.stringify({ commentId, body: preview }),
+			now,
+		);
+
+		const comment = {
+			id: commentId,
+			issueId,
+			userId,
+			userName,
+			body: body.trim(),
+			createdAt: now,
+		};
+
+		return this.jsonResponse({ comment }, 201);
+	}
+
+	private async handleDeleteComment(request: Request): Promise<Response> {
+		const { commentId, userId } = (await request.json()) as {
+			commentId: string;
+			userId: string;
+		};
+
+		const rows = this.sql.exec('SELECT * FROM issue_comments WHERE id = ?', commentId).toArray();
+
+		if (rows.length === 0) {
+			return this.jsonResponse({ error: 'comment_not_found' }, 404);
+		}
+
+		const comment = rows[0];
+		if (comment.user_id !== userId) {
+			return this.jsonResponse({ error: 'forbidden' }, 403);
+		}
+
+		this.sql.exec('DELETE FROM issue_comments WHERE id = ?', commentId);
+
+		// Delete corresponding activity entry
+		this.sql.exec(
+			`DELETE FROM issue_activity WHERE type = 'comment' AND data LIKE ?`,
+			`%"commentId":"${commentId}"%`,
+		);
+
+		return this.jsonResponse({ success: true });
+	}
+
+	private async handleGetActivity(request: Request): Promise<Response> {
+		const { issueId, cursor, limit } = (await request.json()) as {
+			issueId: string;
+			cursor?: string;
+			limit?: number;
+		};
+
+		const pageLimit = Math.min(limit || 50, 100);
+
+		let sql = 'SELECT * FROM issue_activity WHERE issue_id = ?';
+		const params: (string | number)[] = [issueId];
+
+		if (cursor) {
+			sql += ' AND created_at < ?';
+			params.push(cursor);
+		}
+
+		sql += ' ORDER BY created_at DESC LIMIT ?';
+		params.push(pageLimit + 1);
+
+		const rows = this.sql.exec(sql, ...params).toArray();
+		const hasMore = rows.length > pageLimit;
+
+		const activity = rows.slice(0, pageLimit).map((row) => ({
+			id: row.id as string,
+			issueId: row.issue_id as string,
+			userId: row.user_id as string,
+			userName: row.user_name as string,
+			type: row.type as string,
+			data: JSON.parse((row.data as string) || '{}'),
+			createdAt: row.created_at as string,
+		}));
+
+		const nextCursor =
+			hasMore && activity.length > 0 ? activity[activity.length - 1].createdAt : undefined;
+
+		return this.jsonResponse({ activity, nextCursor, hasMore });	}
 
 	private getHourBucket(timestamp: string): string {
 		const date = new Date(timestamp);

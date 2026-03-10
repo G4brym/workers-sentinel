@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
+import { useAuthStore } from '../stores/auth';
 
 interface Issue {
 	id: string;
@@ -62,7 +63,18 @@ interface Event {
 	}>;
 }
 
+interface Activity {
+	id: string;
+	issueId: string;
+	userId: string;
+	userName: string;
+	type: 'comment' | 'status_change';
+	data: Record<string, string>;
+	createdAt: string;
+}
+
 const route = useRoute();
+const authStore = useAuthStore();
 const slug = computed(() => route.params.slug as string);
 const issueId = computed(() => route.params.issueId as string);
 
@@ -72,22 +84,29 @@ const selectedEvent = ref<Event | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const expandedFrames = ref<Set<number>>(new Set());
+const activity = ref<Activity[]>([]);
+const newComment = ref('');
+const submittingComment = ref(false);
 
 async function loadIssue() {
 	loading.value = true;
 	error.value = null;
 
 	try {
-		const [issueResponse, eventsResponse] = await Promise.all([
+		const [issueResponse, eventsResponse, activityResponse] = await Promise.all([
 			api.get<{ issue: Issue }>(`/api/projects/${slug.value}/issues/${issueId.value}`),
 			api.get<{ events: Event[] }>(
 				`/api/projects/${slug.value}/issues/${issueId.value}/events?limit=10`,
+			),
+			api.get<{ activity: Activity[] }>(
+				`/api/projects/${slug.value}/issues/${issueId.value}/activity`,
 			),
 		]);
 
 		issue.value = issueResponse.issue;
 		events.value = eventsResponse.events;
 		selectedEvent.value = eventsResponse.events[0] || null;
+		activity.value = activityResponse.activity;
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load issue';
 	} finally {
@@ -101,8 +120,46 @@ async function updateStatus(newStatus: string) {
 	try {
 		await api.patch(`/api/projects/${slug.value}/issues/${issueId.value}`, { status: newStatus });
 		issue.value.status = newStatus;
+		await loadActivity();
 	} catch (err) {
 		console.error('Failed to update status:', err);
+	}
+}
+
+async function loadActivity() {
+	try {
+		const response = await api.get<{ activity: Activity[] }>(
+			`/api/projects/${slug.value}/issues/${issueId.value}/activity`,
+		);
+		activity.value = response.activity;
+	} catch (err) {
+		console.error('Failed to load activity:', err);
+	}
+}
+
+async function addComment() {
+	if (!newComment.value.trim() || submittingComment.value) return;
+
+	submittingComment.value = true;
+	try {
+		await api.post(`/api/projects/${slug.value}/issues/${issueId.value}/comments`, {
+			body: newComment.value.trim(),
+		});
+		newComment.value = '';
+		await loadActivity();
+	} catch (err) {
+		console.error('Failed to add comment:', err);
+	} finally {
+		submittingComment.value = false;
+	}
+}
+
+async function deleteComment(commentId: string) {
+	try {
+		await api.delete(`/api/projects/${slug.value}/issues/${issueId.value}/comments/${commentId}`);
+		await loadActivity();
+	} catch (err) {
+		console.error('Failed to delete comment:', err);
 	}
 }
 
@@ -313,6 +370,80 @@ onMounted(() => loadIssue());
 									<span v-if="crumb.timestamp" class="text-xs text-gray-400">
 										{{ new Date(crumb.timestamp).toLocaleTimeString() }}
 									</span>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Activity -->
+					<div class="card">
+						<div class="p-4 border-b border-gray-200 dark:border-gray-700">
+							<h2 class="font-semibold text-gray-900 dark:text-white">Activity</h2>
+						</div>
+
+						<!-- Comment form -->
+						<div class="p-4 border-b border-gray-200 dark:border-gray-700">
+							<textarea
+								v-model="newComment"
+								class="input w-full"
+								rows="3"
+								placeholder="Leave a comment..."
+								:disabled="submittingComment"
+								@keydown.meta.enter="addComment"
+								@keydown.ctrl.enter="addComment"
+							></textarea>
+							<div class="flex justify-end mt-2">
+								<button
+									class="btn btn-primary"
+									:disabled="!newComment.trim() || submittingComment"
+									@click="addComment"
+								>
+									{{ submittingComment ? 'Posting...' : 'Comment' }}
+								</button>
+							</div>
+						</div>
+
+						<!-- Activity timeline -->
+						<div v-if="activity.length === 0" class="p-4 text-sm text-gray-500">
+							No activity yet
+						</div>
+						<div v-else class="divide-y divide-gray-200 dark:divide-gray-700">
+							<div
+								v-for="entry in activity"
+								:key="entry.id"
+								class="p-4 text-sm"
+							>
+								<!-- Status change -->
+								<div v-if="entry.type === 'status_change'" class="flex items-center space-x-2 text-gray-500">
+									<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+									</svg>
+									<span>
+										<span class="font-medium text-gray-900 dark:text-white">{{ entry.userName }}</span>
+										changed status from
+										<span class="font-medium">{{ entry.data.from }}</span>
+										to
+										<span class="font-medium">{{ entry.data.to }}</span>
+									</span>
+									<span class="text-xs text-gray-400 flex-shrink-0">{{ formatTime(entry.createdAt) }}</span>
+								</div>
+
+								<!-- Comment -->
+								<div v-else-if="entry.type === 'comment'">
+									<div class="flex items-center justify-between mb-1">
+										<div class="flex items-center space-x-2">
+											<span class="font-medium text-gray-900 dark:text-white">{{ entry.userName }}</span>
+											<span class="text-xs text-gray-400">{{ formatTime(entry.createdAt) }}</span>
+										</div>
+										<button
+											v-if="authStore.user && entry.userId === authStore.user.id"
+											class="text-xs text-gray-400 hover:text-error-600 dark:hover:text-error-400"
+											@click="deleteComment(entry.data.commentId)"
+										>
+											Delete
+										</button>
+									</div>
+									<p class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ entry.data.body }}</p>
 								</div>
 							</div>
 						</div>
