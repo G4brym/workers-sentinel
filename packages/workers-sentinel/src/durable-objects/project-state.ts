@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_issue ON events(issue_id);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_events_received_at ON events(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_environment ON events(environment);
 CREATE INDEX IF NOT EXISTS idx_events_release ON events(release);
 

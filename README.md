@@ -72,6 +72,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - Supports JavaScript, Python, Go, and more
 
 **🎨 Modern Dashboard**
+- Project overview with error trend charts and key metrics
 - Clean, intuitive interface
 - Stack trace visualization
 - Issue grouping and management
@@ -87,6 +88,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🔒 Secure & Private**: Self-hosted on your Cloudflare account with no third-party data access
 - **🔐 Smart Authentication**: Automatic first-user admin setup with session-based auth
 - **📊 Issue Grouping**: Automatic fingerprinting groups similar errors into issues
+- **📈 Project Overview Dashboard**: At-a-glance error health with trend charts, metric cards, and top active issues
 - **📈 Event Statistics**: Track error frequency with hourly aggregations
 - **🔍 Stack Traces**: Full stack trace visualization with code context
 - **👥 User Tracking**: See how many users are affected by each issue
@@ -391,7 +393,7 @@ Planned features for future releases:
 - [x] Team/organization support
 - [ ] Issue assignment
 - [x] Tag-based search and filtering
-- [ ] Time-series charts
+- [x] Time-series charts
 - [x] Rate limiting per project
 - [x] Event retention policies
 
