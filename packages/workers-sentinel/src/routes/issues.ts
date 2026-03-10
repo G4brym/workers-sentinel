@@ -429,6 +429,7 @@ issueRoutes.post('/:slug/issues/:issueId/comments', async (c) => {
 // DELETE /api/projects/:slug/issues/:issueId/comments/:commentId
 issueRoutes.delete('/:slug/issues/:issueId/comments/:commentId', async (c) => {
 	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
 	const commentId = c.req.param('commentId');
 	const auth = c.get('auth');
 
@@ -453,6 +454,7 @@ issueRoutes.delete('/:slug/issues/:issueId/comments/:commentId', async (c) => {
 			body: JSON.stringify({
 				commentId,
 				userId: auth.user.id,
+				issueId,
 			}),
 		}),
 	);

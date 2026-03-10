@@ -96,6 +96,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🔎 Tag-Based Filtering**: Search and filter issues by tag key-value pairs (e.g., browser, OS, environment)
 - **✅ Issue Management**: Mark issues as resolved or ignored
 - **🌍 Environment Filtering**: View errors from specific environments (production, staging, development) separately
+- **💬 Comments & Activity Timeline**: Post comments on issues and view a unified activity feed of comments and status changes
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
 - **👥 Team Management**: Add members to projects with role-based access control (owner/admin/member)
 - **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint

@@ -948,7 +948,6 @@ export class ProjectState extends DurableObject<Env> {
 
 		// Also record activity
 		const activityId = crypto.randomUUID();
-		const preview = body.trim().length > 200 ? `${body.trim().slice(0, 200)}...` : body.trim();
 		this.sql.exec(
 			`INSERT INTO issue_activity (id, issue_id, user_id, user_name, type, data, created_at)
 			 VALUES (?, ?, ?, ?, 'comment', ?, ?)`,
@@ -956,7 +955,7 @@ export class ProjectState extends DurableObject<Env> {
 			issueId,
 			userId,
 			userName,
-			JSON.stringify({ commentId, body: preview }),
+			JSON.stringify({ commentId, body: body.trim() }),
 			now,
 		);
 
@@ -973,9 +972,10 @@ export class ProjectState extends DurableObject<Env> {
 	}
 
 	private async handleDeleteComment(request: Request): Promise<Response> {
-		const { commentId, userId } = (await request.json()) as {
+		const { commentId, userId, issueId } = (await request.json()) as {
 			commentId: string;
 			userId: string;
+			issueId: string;
 		};
 
 		const rows = this.sql.exec('SELECT * FROM issue_comments WHERE id = ?', commentId).toArray();
@@ -991,9 +991,11 @@ export class ProjectState extends DurableObject<Env> {
 
 		this.sql.exec('DELETE FROM issue_comments WHERE id = ?', commentId);
 
-		// Delete corresponding activity entry
+		// Delete corresponding activity entry, scoped by issue_id for efficiency
+		const commentIssueId = issueId || (comment.issue_id as string);
 		this.sql.exec(
-			`DELETE FROM issue_activity WHERE type = 'comment' AND data LIKE ?`,
+			`DELETE FROM issue_activity WHERE type = 'comment' AND issue_id = ? AND data LIKE ?`,
+			commentIssueId,
 			`%"commentId":"${commentId}"%`,
 		);
 
@@ -1013,11 +1015,13 @@ export class ProjectState extends DurableObject<Env> {
 		const params: (string | number)[] = [issueId];
 
 		if (cursor) {
-			sql += ' AND created_at < ?';
-			params.push(cursor);
+			// Composite cursor: "created_at|id" to avoid skipping entries with same timestamp
+			const [cursorTime, cursorId] = cursor.split('|');
+			sql += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
+			params.push(cursorTime, cursorTime, cursorId);
 		}
 
-		sql += ' ORDER BY created_at DESC LIMIT ?';
+		sql += ' ORDER BY created_at DESC, id DESC LIMIT ?';
 		params.push(pageLimit + 1);
 
 		const rows = this.sql.exec(sql, ...params).toArray();
@@ -1033,8 +1037,8 @@ export class ProjectState extends DurableObject<Env> {
 			createdAt: row.created_at as string,
 		}));
 
-		const nextCursor =
-			hasMore && activity.length > 0 ? activity[activity.length - 1].createdAt : undefined;
+		const lastEntry = activity.length > 0 ? activity[activity.length - 1] : undefined;
+		const nextCursor = hasMore && lastEntry ? `${lastEntry.createdAt}|${lastEntry.id}` : undefined;
 
 		return this.jsonResponse({ activity, nextCursor, hasMore });	}
 
