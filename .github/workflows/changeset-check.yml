@@ -26,4 +26,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Check for changesets
-        run: pnpx changeset status --since=origin/main
+        run: pnpm exec changeset status --since=origin/main
