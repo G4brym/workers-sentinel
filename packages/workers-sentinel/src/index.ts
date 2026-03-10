@@ -74,3 +74,4 @@ export default app;
 export function workersSentinel() {
 	return app;
 }
+
