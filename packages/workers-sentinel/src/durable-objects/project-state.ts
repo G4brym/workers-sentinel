@@ -1471,6 +1471,14 @@ export class ProjectState extends DurableObject<Env> {
 			return this.jsonResponse({ error: 'missing_filter_id' }, 400);
 		}
 
+		// Check filter exists
+		const existing = this.sql
+			.exec('SELECT id FROM inbound_filters WHERE id = ?', filterId)
+			.toArray();
+		if (existing.length === 0) {
+			return this.jsonResponse({ error: 'filter_not_found' }, 404);
+		}
+
 		const updates: string[] = [];
 		const params: (string | number | null)[] = [];
 
@@ -1500,7 +1508,7 @@ export class ProjectState extends DurableObject<Env> {
 		}
 
 		params.push(filterId);
-		this.sql.exec(`UPDATE inbound_filters SET \${updates.join(', ')} WHERE id = ?`, ...params);
+		this.sql.exec(`UPDATE inbound_filters SET ${updates.join(', ')} WHERE id = ?`, ...params);
 
 		const row = this.sql.exec('SELECT * FROM inbound_filters WHERE id = ?', filterId).one();
 		return this.jsonResponse({ filter: row ? this.rowToFilter(row) : null });
@@ -1511,6 +1519,14 @@ export class ProjectState extends DurableObject<Env> {
 
 		if (!filterId) {
 			return this.jsonResponse({ error: 'missing_filter_id' }, 400);
+		}
+
+		// Check filter exists
+		const existing = this.sql
+			.exec('SELECT id FROM inbound_filters WHERE id = ?', filterId)
+			.toArray();
+		if (existing.length === 0) {
+			return this.jsonResponse({ error: 'filter_not_found' }, 404);
 		}
 
 		this.sql.exec('DELETE FROM inbound_filters WHERE id = ?', filterId);

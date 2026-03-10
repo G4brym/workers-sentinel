@@ -135,7 +135,7 @@ filterRoutes.patch('/:slug/filters/:filterId', async (c) => {
 	);
 
 	const data = await response.json();
-	return c.json(data, response.status as 200 | 400);
+	return c.json(data, response.status as 200 | 400 | 404);
 });
 
 // Delete a filter
@@ -163,5 +163,5 @@ filterRoutes.delete('/:slug/filters/:filterId', async (c) => {
 	);
 
 	const data = await response.json();
-	return c.json(data);
+	return c.json(data, response.status as 200 | 404);
 });
