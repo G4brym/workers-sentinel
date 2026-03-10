@@ -1291,6 +1291,11 @@ export class ProjectState extends DurableObject<Env> {
 			return this.jsonResponse({ error: 'missing_issue_id' }, 400);
 		}
 
+		const rows = this.sql.exec('SELECT id FROM issues WHERE id = ?', issueId).toArray();
+		if (rows.length === 0) {
+			return this.jsonResponse({ error: 'issue_not_found' }, 404);
+		}
+
 		this.sql.exec('UPDATE issues SET snoozed_until = NULL WHERE id = ?', issueId);
 
 		const row = this.sql.exec('SELECT * FROM issues WHERE id = ?', issueId).one();

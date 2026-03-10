@@ -94,7 +94,8 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **👥 User Tracking**: See how many users are affected by each issue
 - **🏷️ Tags & Context**: View tags, breadcrumbs, and contextual data
 - **🔎 Tag-Based Filtering**: Search and filter issues by tag key-value pairs (e.g., browser, OS, environment)
-- **✅ Issue Management**: Mark issues as resolved or ignored
+- **✅ Issue Management**: Mark issues as resolved or ignored, or snooze them to revisit later
+- **⏰ Issue Snooze**: Temporarily hide issues for a configurable duration (1h, 1d, 3d, 1w) with automatic un-snooze via Durable Object alarms
 - **🌍 Environment Filtering**: View errors from specific environments (production, staging, development) separately
 - **💬 Comments & Activity Timeline**: Post comments on issues and view a unified activity feed of comments and status changes
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
