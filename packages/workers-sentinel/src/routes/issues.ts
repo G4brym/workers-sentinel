@@ -57,6 +57,7 @@ issueRoutes.get('/:slug/issues', async (c) => {
 	const sort = c.req.query('sort');
 	const cursor = c.req.query('cursor');
 	const limit = c.req.query('limit');
+	const tagParams = new URL(c.req.url).searchParams.getAll('tag');
 
 	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
 	const projectState = c.env.PROJECT_STATE.get(projectStateId);
@@ -73,6 +74,7 @@ issueRoutes.get('/:slug/issues', async (c) => {
 				sort,
 				cursor,
 				limit: limit ? parseInt(limit, 10) : undefined,
+				tags: tagParams.length > 0 ? tagParams : undefined,
 			}),
 		}),
 	);
@@ -207,4 +209,58 @@ issueRoutes.get('/:slug/stats', async (c) => {
 
 	const data = await response.json();
 	return c.json(data);
+});
+
+// Get tag facets for a project
+// GET /api/projects/:slug/tags
+issueRoutes.get('/:slug/tags', async (c) => {
+	const slug = c.req.param('slug');
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) return projectResult;
+
+	const { project } = projectResult;
+	const limit = c.req.query('limit');
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/tags', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ limit: limit ? parseInt(limit, 10) : undefined }),
+		}),
+	);
+
+	return c.json(await response.json());
+});
+
+// Get values for a specific tag key
+// GET /api/projects/:slug/tags/:key/values
+issueRoutes.get('/:slug/tags/:key/values', async (c) => {
+	const slug = c.req.param('slug');
+	const key = c.req.param('key');
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) return projectResult;
+
+	const { project } = projectResult;
+	const query = c.req.query('query');
+	const limit = c.req.query('limit');
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/tag-values', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				key,
+				query,
+				limit: limit ? parseInt(limit, 10) : undefined,
+			}),
+		}),
+	);
+
+	return c.json(await response.json());
 });

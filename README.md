@@ -90,6 +90,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🔍 Stack Traces**: Full stack trace visualization with code context
 - **👥 User Tracking**: See how many users are affected by each issue
 - **🏷️ Tags & Context**: View tags, breadcrumbs, and contextual data
+- **🔎 Tag-Based Filtering**: Search and filter issues by tag key-value pairs (e.g., browser, OS, environment)
 - **✅ Issue Management**: Mark issues as resolved or ignored
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
 - **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint
@@ -319,7 +320,7 @@ Planned features for future releases:
 - [ ] Session replay support
 - [ ] Team/organization support
 - [ ] Issue assignment
-- [ ] Search functionality
+- [x] Tag-based search and filtering
 - [ ] Time-series charts
 - [x] Rate limiting per project
 - [ ] Event retention policies
