@@ -49,6 +49,7 @@
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.12.4",
 		"@cloudflare/workers-types": "^4.20260118.0",
+		"vitest": "3.0.9",
 		"wrangler": "^4.59.2"
 	},
 	"peerDependencies": {
