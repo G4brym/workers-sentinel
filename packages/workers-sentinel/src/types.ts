@@ -172,11 +172,6 @@ export interface ParsedEnvelope {
 	items: EnvelopeItem[];
 }
 
-// Project config types
-export interface ProjectConfig {
-	maxEventsPerHour: number; // 0 = unlimited
-}
-
 // API types
 export interface ApiError {
 	error: string;

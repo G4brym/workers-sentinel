@@ -131,6 +131,8 @@ projectRoutes.patch('/:slug', async (c) => {
 
 	const projectData = (await getResponse.json()) as { project: { id: string } };
 
+	const result: Record<string, unknown> = {};
+
 	// Update webhook URL in AuthState if provided
 	if (body.webhookUrl !== undefined) {
 		const updateResponse = await authState.fetch(
@@ -145,15 +147,12 @@ projectRoutes.patch('/:slug', async (c) => {
 			}),
 		);
 
-		const data = await updateResponse.json();
+		const data = (await updateResponse.json()) as Record<string, unknown>;
 		if (!updateResponse.ok) {
 			return c.json(data, updateResponse.status as ContentfulStatusCode);
 		}
 
-		// If only webhookUrl was updated (no rate limit config), return AuthState response
-		if (body.maxEventsPerHour === undefined) {
-			return c.json(data, updateResponse.status as ContentfulStatusCode);
-		}
+		Object.assign(result, data);
 	}
 
 	// Update rate limit config in ProjectState if provided
@@ -169,16 +168,15 @@ projectRoutes.patch('/:slug', async (c) => {
 			}),
 		);
 
+		const data = (await configResponse.json()) as Record<string, unknown>;
 		if (!configResponse.ok) {
-			const data = await configResponse.json();
 			return c.json(data, configResponse.status as ContentfulStatusCode);
 		}
 
-		const data = await configResponse.json();
-		return c.json(data);
+		Object.assign(result, data);
 	}
 
-	return c.json({ success: true });
+	return c.json(Object.keys(result).length > 0 ? result : { success: true });
 });
 
 // Get rate limit status for a project
