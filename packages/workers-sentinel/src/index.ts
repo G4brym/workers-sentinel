@@ -53,6 +53,8 @@ app.get('*', (c) => {
 	return c.env.ASSETS?.fetch(c.req.raw) ?? c.text('Dashboard not found', 404);
 });
 
+export default app;
+
 export function workersSentinel() {
-	return app
+	return app;
 }

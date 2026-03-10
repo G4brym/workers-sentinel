@@ -110,7 +110,7 @@ projectRoutes.patch('/:slug', async (c) => {
 	}
 
 	const slug = c.req.param('slug');
-	const body = await c.req.json<{ webhookUrl?: string | null }>();
+	const body = await c.req.json<{ webhookUrl?: string | null; maxEventsPerHour?: number }>();
 
 	const authStateId = c.env.AUTH_STATE.idFromName('global');
 	const authState = c.env.AUTH_STATE.get(authStateId);
@@ -131,21 +131,84 @@ projectRoutes.patch('/:slug', async (c) => {
 
 	const projectData = (await getResponse.json()) as { project: { id: string } };
 
-	// Update the project
-	const updateResponse = await authState.fetch(
-		new Request('http://internal/update-project', {
+	const result: Record<string, unknown> = {};
+
+	// Update webhook URL in AuthState if provided
+	if (body.webhookUrl !== undefined) {
+		const updateResponse = await authState.fetch(
+			new Request('http://internal/update-project', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					projectId: projectData.project.id,
+					userId: auth.user.id,
+					webhookUrl: body.webhookUrl,
+				}),
+			}),
+		);
+
+		const data = (await updateResponse.json()) as Record<string, unknown>;
+		if (!updateResponse.ok) {
+			return c.json(data, updateResponse.status as ContentfulStatusCode);
+		}
+
+		Object.assign(result, data);
+	}
+
+	// Update rate limit config in ProjectState if provided
+	if (body.maxEventsPerHour !== undefined) {
+		const projectStateId = c.env.PROJECT_STATE.idFromName(projectData.project.id);
+		const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+		const configResponse = await projectState.fetch(
+			new Request('http://internal/config/update', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ maxEventsPerHour: body.maxEventsPerHour }),
+			}),
+		);
+
+		const data = (await configResponse.json()) as Record<string, unknown>;
+		if (!configResponse.ok) {
+			return c.json(data, configResponse.status as ContentfulStatusCode);
+		}
+
+		Object.assign(result, data);
+	}
+
+	return c.json(Object.keys(result).length > 0 ? result : { success: true });
+});
+
+// Get rate limit status for a project
+projectRoutes.get('/:slug/rate-limit', async (c) => {
+	const auth = c.get('auth');
+	if (!auth) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+
+	const slug = c.req.param('slug');
+	const authStateId = c.env.AUTH_STATE.idFromName('global');
+	const authState = c.env.AUTH_STATE.get(authStateId);
+
+	const getResponse = await authState.fetch(
+		new Request('http://internal/get-project', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				projectId: projectData.project.id,
-				userId: auth.user.id,
-				webhookUrl: body.webhookUrl,
-			}),
+			body: JSON.stringify({ slug, userId: auth.user.id }),
 		}),
 	);
 
-	const data = await updateResponse.json();
-	return c.json(data, updateResponse.status as ContentfulStatusCode);
+	if (!getResponse.ok) {
+		const error = await getResponse.json();
+		return c.json(error, getResponse.status as ContentfulStatusCode);
+	}
+
+	const projectData = (await getResponse.json()) as { project: { id: string } };
+	const projectStateId = c.env.PROJECT_STATE.idFromName(projectData.project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(new Request('http://internal/rate-limit-status'));
+	return c.json(await response.json());
 });
 
 // Test webhook

@@ -65,6 +65,16 @@ CREATE TABLE IF NOT EXISTS issue_users (
   FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS project_config (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rate_limit_counters (
+  bucket TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS event_tags (
   event_id TEXT NOT NULL,
   issue_id TEXT NOT NULL,
@@ -81,6 +91,8 @@ CREATE INDEX IF NOT EXISTS idx_event_tags_issue ON event_tags(issue_id);
 export class ProjectState extends DurableObject<Env> {
 	private sql: SqlStorage;
 	private initialized = false;
+	private rateLimitCount = 0;
+	private rateLimitBucket = '';
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -90,6 +102,7 @@ export class ProjectState extends DurableObject<Env> {
 	private async ensureSchema(): Promise<void> {
 		if (this.initialized) return;
 		this.sql.exec(SCHEMA);
+		this.warmRateLimitCounter();
 		this.initialized = true;
 	}
 
@@ -119,6 +132,12 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetLatestEvents(request);
 				case '/stats':
 					return this.handleGetStats(request);
+				case '/config':
+					return this.handleGetConfig();
+				case '/config/update':
+					return this.handleUpdateConfig(request);
+				case '/rate-limit-status':
+					return this.handleRateLimitStatus();
 				case '/tags':
 					return this.handleGetTags(request);
 				case '/tag-values':
@@ -142,6 +161,21 @@ export class ProjectState extends DurableObject<Env> {
 	}
 
 	private async handleIngest(request: Request): Promise<Response> {
+		// Check rate limit before processing
+		const rateCheck = this.checkRateLimit();
+		if (!rateCheck.allowed) {
+			return new Response(
+				JSON.stringify({ error: 'rate_limited', message: 'Project event quota exceeded' }),
+				{
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': String(rateCheck.retryAfter || 3600),
+					},
+				},
+			);
+		}
+
 		const event = (await request.json()) as SentryEvent;
 
 		const eventId = event.event_id || crypto.randomUUID();
@@ -241,6 +275,14 @@ export class ProjectState extends DurableObject<Env> {
        ON CONFLICT (issue_id, bucket) DO UPDATE SET count = count + 1`,
 			issueId,
 			bucket,
+		);
+
+		// Update rate limit counter
+		this.rateLimitCount++;
+		const currentBucket = this.getHourBucket(new Date().toISOString());
+		this.sql.exec(
+			'INSERT INTO rate_limit_counters (bucket, count) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1',
+			currentBucket,
 		);
 
 		// Track unique users
@@ -660,6 +702,100 @@ export class ProjectState extends DurableObject<Env> {
 			status: row.status as Issue['status'],
 			metadata: JSON.parse((row.metadata as string) || '{}'),
 		};
+	}
+
+	private warmRateLimitCounter(): void {
+		const bucket = this.getHourBucket(new Date().toISOString());
+		this.rateLimitBucket = bucket;
+		// Check persisted counter first
+		const row = this.sql
+			.exec('SELECT count FROM rate_limit_counters WHERE bucket = ?', bucket)
+			.toArray();
+		if (row.length > 0) {
+			this.rateLimitCount = row[0].count as number;
+		} else {
+			// Fallback: sum from issue_stats for this hour
+			const statsRow = this.sql
+				.exec('SELECT COALESCE(SUM(count), 0) as total FROM issue_stats WHERE bucket = ?', bucket)
+				.one();
+			this.rateLimitCount = (statsRow?.total as number) || 0;
+		}
+	}
+
+	private checkRateLimit(): { allowed: boolean; retryAfter?: number } {
+		const maxPerHour = this.getConfigValue('max_events_per_hour');
+		if (!maxPerHour || maxPerHour === '0') {
+			return { allowed: true };
+		}
+		const limit = Number.parseInt(maxPerHour, 10);
+		if (limit <= 0) return { allowed: true };
+
+		const currentBucket = this.getHourBucket(new Date().toISOString());
+		if (currentBucket !== this.rateLimitBucket) {
+			// New hour — reset counter and clean old buckets
+			this.rateLimitBucket = currentBucket;
+			this.rateLimitCount = 0;
+			this.sql.exec('DELETE FROM rate_limit_counters WHERE bucket < ?', currentBucket);
+		}
+
+		if (this.rateLimitCount >= limit) {
+			// Calculate seconds until next hour
+			const now = new Date();
+			const nextHour = new Date(now);
+			nextHour.setMinutes(0, 0, 0);
+			nextHour.setHours(nextHour.getHours() + 1);
+			const retryAfter = Math.ceil((nextHour.getTime() - now.getTime()) / 1000);
+			return { allowed: false, retryAfter };
+		}
+		return { allowed: true };
+	}
+
+	private getConfigValue(key: string): string | null {
+		const rows = this.sql.exec('SELECT value FROM project_config WHERE key = ?', key).toArray();
+		return rows.length > 0 ? (rows[0].value as string) : null;
+	}
+
+	private setConfigValue(key: string, value: string): void {
+		this.sql.exec(
+			'INSERT INTO project_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?',
+			key,
+			value,
+			value,
+		);
+	}
+
+	private handleGetConfig(): Response {
+		const maxEventsPerHour = this.getConfigValue('max_events_per_hour') || '0';
+		return this.jsonResponse({ config: { maxEventsPerHour: Number.parseInt(maxEventsPerHour, 10) } });
+	}
+
+	private async handleUpdateConfig(request: Request): Promise<Response> {
+		const { maxEventsPerHour } = (await request.json()) as { maxEventsPerHour?: number };
+		if (maxEventsPerHour !== undefined) {
+			if (typeof maxEventsPerHour !== 'number' || maxEventsPerHour < 0) {
+				return this.jsonResponse(
+					{ error: 'invalid_value', message: 'maxEventsPerHour must be a non-negative number' },
+					400,
+				);
+			}
+			this.setConfigValue('max_events_per_hour', String(Math.floor(maxEventsPerHour)));
+		}
+		return this.handleGetConfig();
+	}
+
+	private handleRateLimitStatus(): Response {
+		const maxPerHour = Number.parseInt(this.getConfigValue('max_events_per_hour') || '0', 10);
+		const currentBucket = this.getHourBucket(new Date().toISOString());
+		let currentCount = this.rateLimitCount;
+		if (currentBucket !== this.rateLimitBucket) {
+			currentCount = 0;
+		}
+		return this.jsonResponse({
+			maxEventsPerHour: maxPerHour,
+			currentHourCount: currentCount,
+			currentBucket,
+			isLimited: maxPerHour > 0 && currentCount >= maxPerHour,
+		});
 	}
 
 	private jsonResponse(data: unknown, status = 200): Response {
