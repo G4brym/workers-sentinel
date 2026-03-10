@@ -37,7 +37,12 @@ const router = createRouter({
 				},
 				{
 					path: 'projects/:slug',
-					redirect: (to) => `/projects/${to.params.slug}/issues`,
+					redirect: (to) => `/projects/${to.params.slug}/overview`,
+				},
+				{
+					path: 'projects/:slug/overview',
+					name: 'project-overview',
+					component: () => import('../views/ProjectOverview.vue'),
 				},
 				{
 					path: 'projects/:slug/issues',
