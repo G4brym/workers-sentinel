@@ -48,6 +48,17 @@ const retentionDays = ref<number>(0);
 const savingRetention = ref(false);
 const retentionSaved = ref(false);
 
+// Source map state
+const sourceMaps = ref<
+	Array<{ id: string; release: string; fileUrl: string; createdAt: string; size: number }>
+>([]);
+const smRelease = ref('');
+const smFileUrl = ref('');
+const smContent = ref('');
+const uploadingSm = ref(false);
+const smError = ref('');
+const smSuccess = ref(false);
+
 // Members state
 const members = ref<ProjectMember[]>([]);
 const membersLoading = ref(false);
@@ -84,11 +95,71 @@ async function loadProject() {
 			`/api/projects/${slug.value}/settings`,
 		);
 		retentionDays.value = settingsResponse.retentionDays;
+		loadSourceMaps();
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load project';
 	} finally {
 		loading.value = false;
 	}
+}
+
+async function loadSourceMaps() {
+	try {
+		const response = await api.get<{ sourceMaps: typeof sourceMaps.value }>(
+			`/api/projects/${slug.value}/sourcemaps`,
+		);
+		sourceMaps.value = response.sourceMaps;
+	} catch {
+		// Non-critical — just show empty list
+	}
+}
+
+function handleSourceMapFile(event: Event) {
+	const file = (event.target as HTMLInputElement).files?.[0];
+	if (!file) return;
+	const reader = new FileReader();
+	reader.onload = () => {
+		smContent.value = reader.result as string;
+	};
+	reader.readAsText(file);
+}
+
+async function uploadSourceMap() {
+	uploadingSm.value = true;
+	smError.value = '';
+	smSuccess.value = false;
+
+	try {
+		await api.post(`/api/projects/${slug.value}/sourcemaps`, {
+			release: smRelease.value,
+			fileUrl: smFileUrl.value,
+			content: smContent.value,
+		});
+		smSuccess.value = true;
+		smRelease.value = '';
+		smFileUrl.value = '';
+		smContent.value = '';
+		loadSourceMaps();
+	} catch (err) {
+		smError.value = err instanceof Error ? err.message : 'Upload failed';
+	} finally {
+		uploadingSm.value = false;
+	}
+}
+
+async function deleteSourceMap(id: string) {
+	try {
+		await api.delete(`/api/projects/${slug.value}/sourcemaps/${id}`);
+		sourceMaps.value = sourceMaps.value.filter((sm) => sm.id !== id);
+	} catch (err) {
+		console.error('Failed to delete source map:', err);
+	}
+}
+
+function formatSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function loadMembers() {
@@ -594,6 +665,61 @@ onMounted(() => {
 				<router-link to="/settings/tokens" class="btn btn-secondary">
 					Manage API Tokens
 				</router-link>
+			</div>
+
+			<!-- Source Maps -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Source Maps</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Upload source maps to see original source code in stack traces. Associate each source map with a release version and the URL of the minified file it maps to.
+				</p>
+
+				<!-- Upload form -->
+				<div class="space-y-3 mb-6 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Release</label>
+						<input v-model="smRelease" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" placeholder="e.g. my-app@1.2.0" />
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Minified File URL</label>
+						<input v-model="smFileUrl" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" placeholder="e.g. https://example.com/assets/main.abc123.js" />
+					</div>
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Source Map File (.map)</label>
+						<input type="file" accept=".map,.json" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 dark:file:bg-primary-900/20 dark:file:text-primary-400" @change="handleSourceMapFile" />
+					</div>
+					<button
+						class="btn btn-primary"
+						:disabled="uploadingSm || !smRelease || !smFileUrl || !smContent"
+						@click="uploadSourceMap"
+					>
+						{{ uploadingSm ? 'Uploading...' : 'Upload Source Map' }}
+					</button>
+					<p v-if="smError" class="text-sm text-error-600">{{ smError }}</p>
+					<p v-if="smSuccess" class="text-sm text-green-600">Source map uploaded successfully.</p>
+				</div>
+
+				<!-- Existing source maps list -->
+				<div v-if="sourceMaps.length > 0">
+					<h3 class="text-sm font-medium text-gray-900 dark:text-white mb-2">Uploaded Source Maps</h3>
+					<div class="divide-y divide-gray-200 dark:divide-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg">
+						<div v-for="sm in sourceMaps" :key="sm.id" class="flex items-center justify-between p-3">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center space-x-2">
+									<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400">{{ sm.release }}</span>
+									<span class="text-sm text-gray-900 dark:text-white truncate">{{ sm.fileUrl }}</span>
+								</div>
+								<p class="text-xs text-gray-400 mt-1">{{ formatSize(sm.size) }} — {{ formatDate(sm.createdAt) }}</p>
+							</div>
+							<button class="text-gray-400 hover:text-error-600 ml-2" @click="deleteSourceMap(sm.id)">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+								</svg>
+							</button>
+						</div>
+					</div>
+				</div>
+				<p v-else class="text-sm text-gray-400">No source maps uploaded yet.</p>
 			</div>
 
 			<!-- Danger zone -->

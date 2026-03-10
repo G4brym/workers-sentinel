@@ -147,6 +147,17 @@ CREATE TABLE IF NOT EXISTS release_issues (
   FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_release_issues_issue_id ON release_issues(issue_id);
+
+CREATE TABLE IF NOT EXISTS source_maps (
+  id TEXT PRIMARY KEY,
+  release TEXT NOT NULL,
+  file_url TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(release, file_url)
+);
+CREATE INDEX IF NOT EXISTS idx_source_maps_release ON source_maps(release);
 `;
 
 const MIGRATIONS = `
@@ -245,6 +256,14 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleSnoozeIssue(request);
 				case '/issue/unsnooze':
 					return this.handleUnsnoozeIssue(request);
+				case '/sourcemaps/upload':
+					return this.handleUploadSourceMap(request);
+				case '/sourcemaps/list':
+					return this.handleListSourceMaps(request);
+				case '/sourcemaps/get':
+					return this.handleGetSourceMap(request);
+				case '/sourcemaps/delete':
+					return this.handleDeleteSourceMap(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -1523,6 +1542,124 @@ export class ProjectState extends DurableObject<Env> {
 		await this.scheduleNextAlarm();
 
 		return this.jsonResponse({ retentionDays });
+	}
+
+	private async handleUploadSourceMap(request: Request): Promise<Response> {
+		const { release, fileUrl, content } = (await request.json()) as {
+			release: string;
+			fileUrl: string;
+			content: string;
+		};
+
+		if (!release || release.length > 200) {
+			return this.jsonResponse({ error: 'invalid_release' }, 400);
+		}
+		if (!fileUrl || fileUrl.length > 500) {
+			return this.jsonResponse({ error: 'invalid_file_url' }, 400);
+		}
+		if (!content || content.length > 5_242_880) {
+			return this.jsonResponse({ error: 'content_too_large', maxSize: '5MB' }, 400);
+		}
+
+		try {
+			JSON.parse(content);
+		} catch {
+			return this.jsonResponse({ error: 'invalid_source_map_json' }, 400);
+		}
+
+		const id = crypto.randomUUID();
+		const now = new Date().toISOString();
+		const size = new TextEncoder().encode(content).length;
+
+		this.sql.exec(
+			`INSERT INTO source_maps (id, release, file_url, content, created_at, size)
+			 VALUES (?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (release, file_url) DO UPDATE SET
+			   id = excluded.id,
+			   content = excluded.content,
+			   created_at = excluded.created_at,
+			   size = excluded.size`,
+			id,
+			release,
+			fileUrl,
+			content,
+			now,
+			size,
+		);
+
+		return this.jsonResponse({
+			sourceMap: { id, release, fileUrl, createdAt: now, size },
+		});
+	}
+
+	private async handleListSourceMaps(request: Request): Promise<Response> {
+		const { release } = (await request.json()) as { release?: string };
+
+		let sql = 'SELECT id, release, file_url, created_at, size FROM source_maps';
+		const params: string[] = [];
+
+		if (release) {
+			sql += ' WHERE release = ?';
+			params.push(release);
+		}
+
+		sql += ' ORDER BY release DESC, created_at DESC LIMIT 100';
+
+		const rows = this.sql.exec(sql, ...params).toArray();
+		const sourceMaps = rows.map((row) => ({
+			id: row.id as string,
+			release: row.release as string,
+			fileUrl: row.file_url as string,
+			createdAt: row.created_at as string,
+			size: row.size as number,
+		}));
+
+		return this.jsonResponse({ sourceMaps });
+	}
+
+	private async handleGetSourceMap(request: Request): Promise<Response> {
+		const { id, release, fileUrl } = (await request.json()) as {
+			id?: string;
+			release?: string;
+			fileUrl?: string;
+		};
+
+		let row: Record<string, SqlStorageValue> | undefined;
+		if (id) {
+			row = this.sql.exec('SELECT * FROM source_maps WHERE id = ?', id).toArray()[0];
+		} else if (release && fileUrl) {
+			row = this.sql
+				.exec('SELECT * FROM source_maps WHERE release = ? AND file_url = ?', release, fileUrl)
+				.toArray()[0];
+		} else {
+			return this.jsonResponse({ error: 'missing_id_or_release_and_file_url' }, 400);
+		}
+
+		if (!row) {
+			return this.jsonResponse({ error: 'source_map_not_found' }, 404);
+		}
+
+		return this.jsonResponse({
+			sourceMap: {
+				id: row.id as string,
+				release: row.release as string,
+				fileUrl: row.file_url as string,
+				createdAt: row.created_at as string,
+				size: row.size as number,
+			},
+			content: row.content as string,
+		});
+	}
+
+	private async handleDeleteSourceMap(request: Request): Promise<Response> {
+		const { id } = (await request.json()) as { id: string };
+
+		if (!id) {
+			return this.jsonResponse({ error: 'missing_id' }, 400);
+		}
+
+		this.sql.exec('DELETE FROM source_maps WHERE id = ?', id);
+		return this.jsonResponse({ success: true });
 	}
 
 	private jsonResponse(data: unknown, status = 200): Response {
