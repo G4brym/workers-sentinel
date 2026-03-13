@@ -720,6 +720,8 @@ onMounted(() => {
 					</div>
 				</div>
 				<p v-else class="text-sm text-gray-400">No source maps uploaded yet.</p>
+			</div>
+
 			<!-- Inbound Filters -->
 			<div class="card p-6">
 				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Inbound Filters</h2>
