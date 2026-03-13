@@ -124,7 +124,7 @@ tokenRoutes.use('*', async (c, next) => {
 			403,
 		);
 	}
-	await next();
+	return next();
 });
 
 // List current user's API tokens
