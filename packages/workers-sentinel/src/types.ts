@@ -34,8 +34,9 @@ export interface Project {
 }
 
 export interface ProjectMember {
-	projectId: string;
 	userId: string;
+	email: string;
+	name: string;
 	role: 'owner' | 'admin' | 'member';
 	createdAt: string;
 }

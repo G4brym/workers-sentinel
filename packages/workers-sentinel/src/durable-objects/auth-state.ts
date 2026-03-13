@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { ApiToken, Env, Project, Session, User } from '../types';
+import type { ApiToken, Env, Project, ProjectMember, Session, User } from '../types';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -121,6 +121,16 @@ export class AuthState extends DurableObject<Env> {
 					return this.handleRevokeApiToken(request);
 				case '/validate-api-token':
 					return this.handleValidateApiToken(request);
+				case '/list-project-members':
+					return this.handleListProjectMembers(request);
+				case '/add-project-member':
+					return this.handleAddProjectMember(request);
+				case '/remove-project-member':
+					return this.handleRemoveProjectMember(request);
+				case '/update-project-member':
+					return this.handleUpdateProjectMember(request);
+				case '/list-users':
+					return this.handleListUsers(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -806,6 +816,241 @@ export class AuthState extends DurableObject<Env> {
 		};
 
 		return this.jsonResponse({ user, session });
+	}
+
+	private async handleListProjectMembers(request: Request): Promise<Response> {
+		const { projectId } = (await request.json()) as { projectId: string };
+
+		if (!projectId) {
+			return this.jsonResponse({ error: 'missing_fields' }, 400);
+		}
+
+		const rows = this.sql
+			.exec(
+				`SELECT pm.user_id, pm.role, pm.created_at, u.email, u.name
+				FROM project_members pm
+				JOIN users u ON pm.user_id = u.id
+				WHERE pm.project_id = ?
+				ORDER BY pm.created_at ASC`,
+				projectId,
+			)
+			.toArray();
+
+		const members: ProjectMember[] = rows.map((row) => ({
+			userId: row.user_id as string,
+			email: row.email as string,
+			name: row.name as string,
+			role: row.role as 'owner' | 'admin' | 'member',
+			createdAt: row.created_at as string,
+		}));
+
+		return this.jsonResponse({ members });
+	}
+
+	private async handleAddProjectMember(request: Request): Promise<Response> {
+		const { projectId, email, role } = (await request.json()) as {
+			projectId: string;
+			email: string;
+			role: string;
+		};
+
+		if (!projectId || !email || !role) {
+			return this.jsonResponse(
+				{ error: 'missing_fields', message: 'projectId, email, and role are required' },
+				400,
+			);
+		}
+
+		if (role !== 'admin' && role !== 'member') {
+			return this.jsonResponse(
+				{ error: 'invalid_role', message: 'Role must be admin or member' },
+				400,
+			);
+		}
+
+		// Look up user by email
+		const userRows = this.sql
+			.exec('SELECT id, email, name FROM users WHERE email = ?', email.toLowerCase())
+			.toArray();
+
+		if (userRows.length === 0) {
+			return this.jsonResponse(
+				{ error: 'user_not_found', message: 'No user found with that email' },
+				404,
+			);
+		}
+
+		const user = userRows[0];
+		const userId = user.id as string;
+
+		// Check if already a member
+		const existing = this.sql
+			.exec('SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?', projectId, userId)
+			.toArray();
+
+		if (existing.length > 0) {
+			return this.jsonResponse(
+				{ error: 'already_member', message: 'User is already a member of this project' },
+				409,
+			);
+		}
+
+		const now = new Date().toISOString();
+		this.sql.exec(
+			'INSERT INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
+			projectId,
+			userId,
+			role,
+			now,
+		);
+
+		const member: ProjectMember = {
+			userId,
+			email: user.email as string,
+			name: user.name as string,
+			role: role as 'admin' | 'member',
+			createdAt: now,
+		};
+
+		return this.jsonResponse({ member });
+	}
+
+	private async handleRemoveProjectMember(request: Request): Promise<Response> {
+		const { projectId, userId } = (await request.json()) as {
+			projectId: string;
+			userId: string;
+		};
+
+		if (!projectId || !userId) {
+			return this.jsonResponse({ error: 'missing_fields' }, 400);
+		}
+
+		// Check that the user being removed is NOT the owner
+		const memberRows = this.sql
+			.exec(
+				'SELECT role FROM project_members WHERE project_id = ? AND user_id = ?',
+				projectId,
+				userId,
+			)
+			.toArray();
+
+		if (memberRows.length === 0) {
+			return this.jsonResponse(
+				{ error: 'not_found', message: 'User is not a member of this project' },
+				404,
+			);
+		}
+
+		if (memberRows[0].role === 'owner') {
+			return this.jsonResponse(
+				{ error: 'cannot_remove_owner', message: 'Cannot remove the project owner' },
+				400,
+			);
+		}
+
+		this.sql.exec(
+			'DELETE FROM project_members WHERE project_id = ? AND user_id = ?',
+			projectId,
+			userId,
+		);
+
+		return this.jsonResponse({ success: true });
+	}
+
+	private async handleUpdateProjectMember(request: Request): Promise<Response> {
+		const { projectId, userId, role } = (await request.json()) as {
+			projectId: string;
+			userId: string;
+			role: string;
+		};
+
+		if (!projectId || !userId || !role) {
+			return this.jsonResponse({ error: 'missing_fields' }, 400);
+		}
+
+		if (role !== 'admin' && role !== 'member') {
+			return this.jsonResponse(
+				{ error: 'invalid_role', message: 'Role must be admin or member' },
+				400,
+			);
+		}
+
+		// Check that target user is not the owner
+		const memberRows = this.sql
+			.exec(
+				'SELECT role FROM project_members WHERE project_id = ? AND user_id = ?',
+				projectId,
+				userId,
+			)
+			.toArray();
+
+		if (memberRows.length === 0) {
+			return this.jsonResponse(
+				{ error: 'not_found', message: 'User is not a member of this project' },
+				404,
+			);
+		}
+
+		if (memberRows[0].role === 'owner') {
+			return this.jsonResponse(
+				{ error: 'cannot_modify_owner', message: 'Cannot change the owner role' },
+				400,
+			);
+		}
+
+		this.sql.exec(
+			'UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?',
+			role,
+			projectId,
+			userId,
+		);
+
+		// Fetch updated member with user info
+		const rows = this.sql
+			.exec(
+				`SELECT pm.user_id, pm.role, pm.created_at, u.email, u.name
+				FROM project_members pm
+				JOIN users u ON pm.user_id = u.id
+				WHERE pm.project_id = ? AND pm.user_id = ?`,
+				projectId,
+				userId,
+			)
+			.toArray();
+
+		const row = rows[0];
+		const member: ProjectMember = {
+			userId: row.user_id as string,
+			email: row.email as string,
+			name: row.name as string,
+			role: row.role as 'admin' | 'member',
+			createdAt: row.created_at as string,
+		};
+
+		return this.jsonResponse({ member });
+	}
+
+	private async handleListUsers(request: Request): Promise<Response> {
+		const { requestingUserRole } = (await request.json()) as {
+			requestingUserRole: string;
+		};
+
+		if (requestingUserRole !== 'admin') {
+			return this.jsonResponse({ error: 'forbidden', message: 'Only admins can list users' }, 403);
+		}
+
+		const rows = this.sql
+			.exec('SELECT id, email, name, role, created_at FROM users ORDER BY created_at ASC')
+			.toArray();
+
+		const users = rows.map((row) => ({
+			id: row.id as string,
+			email: row.email as string,
+			name: row.name as string,
+			role: row.role as string,
+			createdAt: row.created_at as string,
+		}));
+
+		return this.jsonResponse({ users });
 	}
 
 	private async createSession(userId: string): Promise<Session> {
