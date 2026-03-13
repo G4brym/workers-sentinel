@@ -132,9 +132,7 @@ projectRoutes.get('/:slug/settings', async (c) => {
 	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
 	const projectState = c.env.PROJECT_STATE.get(projectStateId);
 
-	const settingsResponse = await projectState.fetch(
-		new Request('http://internal/settings'),
-	);
+	const settingsResponse = await projectState.fetch(new Request('http://internal/settings'));
 
 	const data = await settingsResponse.json();
 	return c.json(data);
@@ -148,7 +146,11 @@ projectRoutes.patch('/:slug', async (c) => {
 	}
 
 	const slug = c.req.param('slug');
-	const body = await c.req.json<{ webhookUrl?: string | null; maxEventsPerHour?: number; retentionDays?: number }>();
+	const body = await c.req.json<{
+		webhookUrl?: string | null;
+		maxEventsPerHour?: number;
+		retentionDays?: number;
+	}>();
 
 	const authStateId = c.env.AUTH_STATE.idFromName('global');
 	const authState = c.env.AUTH_STATE.get(authStateId);
@@ -213,7 +215,6 @@ projectRoutes.patch('/:slug', async (c) => {
 
 		Object.assign(result, data);
 	}
-
 
 	// Update retention settings in ProjectState if provided
 	if (body.retentionDays !== undefined) {

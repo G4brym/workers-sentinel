@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_issue ON events(issue_id);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_events_received_at ON events(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_environment ON events(environment);
 CREATE INDEX IF NOT EXISTS idx_events_release ON events(release);
 
@@ -175,6 +176,8 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleUpdateSettings(request);
 				case '/environments':
 					return this.handleGetEnvironments();
+				case '/summary':
+					return this.handleGetSummary();
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -559,10 +562,7 @@ export class ProjectState extends DurableObject<Env> {
 		const placeholders = issueIds.map(() => '?').join(', ');
 
 		if (action === 'delete') {
-			const cursor = this.sql.exec(
-				`DELETE FROM issues WHERE id IN (${placeholders})`,
-				...issueIds,
-			);
+			const cursor = this.sql.exec(`DELETE FROM issues WHERE id IN (${placeholders})`, ...issueIds);
 			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
 		}
 
@@ -784,6 +784,68 @@ export class ProjectState extends DurableObject<Env> {
 		return this.jsonResponse({ environments });
 	}
 
+	private async handleGetSummary(): Promise<Response> {
+		const now = new Date();
+		const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+		const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+		// Issue counts by status
+		const statusCounts = this.sql
+			.exec('SELECT status, COUNT(*) as count FROM issues GROUP BY status')
+			.toArray();
+
+		const issuesByStatus: Record<string, number> = {};
+		for (const row of statusCounts) {
+			issuesByStatus[row.status as string] = row.count as number;
+		}
+
+		// Event counts for 24h and 7d
+		const events24h = this.sql
+			.exec('SELECT COUNT(*) as count FROM events WHERE received_at >= ?', oneDayAgo)
+			.one();
+		const events7d = this.sql
+			.exec('SELECT COUNT(*) as count FROM events WHERE received_at >= ?', sevenDaysAgo)
+			.one();
+
+		// Error trend: hourly buckets for last 7 days
+		const trendRows = this.sql
+			.exec(
+				`SELECT bucket, SUM(count) as count FROM issue_stats
+				 WHERE bucket >= ? GROUP BY bucket ORDER BY bucket ASC`,
+				sevenDaysAgo,
+			)
+			.toArray();
+
+		const trend = trendRows.map((row) => ({
+			bucket: row.bucket as string,
+			count: row.count as number,
+		}));
+
+		// Top 5 most active unresolved issues
+		const topIssueRows = this.sql
+			.exec(
+				`SELECT * FROM issues WHERE status = 'unresolved'
+				 ORDER BY issues.count DESC LIMIT 5`,
+			)
+			.toArray();
+
+		const topIssues = topIssueRows.map((row) => this.rowToIssue(row));
+
+		// Total unique users affected
+		const userCountRow = this.sql
+			.exec('SELECT COUNT(DISTINCT user_hash) as count FROM issue_users')
+			.one();
+
+		return this.jsonResponse({
+			issuesByStatus,
+			events24h: (events24h?.count as number) || 0,
+			events7d: (events7d?.count as number) || 0,
+			trend,
+			topIssues,
+			totalUsers: (userCountRow?.count as number) || 0,
+		});
+	}
+
 	private getHourBucket(timestamp: string): string {
 		const date = new Date(timestamp);
 		date.setMinutes(0, 0, 0);
@@ -925,9 +987,7 @@ export class ProjectState extends DurableObject<Env> {
 		const retentionDays = this.getRetentionDays();
 		if (retentionDays <= 0) return;
 
-		const cutoffDate = new Date(
-			Date.now() - retentionDays * MS_PER_DAY,
-		).toISOString();
+		const cutoffDate = new Date(Date.now() - retentionDays * MS_PER_DAY).toISOString();
 
 		// Delete old events
 		this.sql.exec('DELETE FROM events WHERE received_at < ?', cutoffDate);
@@ -956,18 +1016,14 @@ export class ProjectState extends DurableObject<Env> {
 		this.sql.exec('DELETE FROM issues WHERE count = 0');
 
 		// Clean up orphaned issue_users for deleted issues
-		this.sql.exec(
-			'DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)',
-		);
+		this.sql.exec('DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)');
 
 		// Reschedule alarm for tomorrow
 		await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 	}
 
 	private getRetentionDays(): number {
-		const rows = this.sql
-			.exec("SELECT value FROM settings WHERE key = 'retention_days'")
-			.toArray();
+		const rows = this.sql.exec("SELECT value FROM settings WHERE key = 'retention_days'").toArray();
 		return rows.length > 0 ? Number.parseInt(rows[0].value as string, 10) : 0;
 	}
 
@@ -979,9 +1035,16 @@ export class ProjectState extends DurableObject<Env> {
 	private async handleUpdateSettings(request: Request): Promise<Response> {
 		const { retentionDays } = (await request.json()) as ProjectSettings;
 
-		if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
+		if (
+			typeof retentionDays !== 'number' ||
+			!Number.isInteger(retentionDays) ||
+			retentionDays < 0
+		) {
 			return this.jsonResponse(
-				{ error: 'invalid_retention_days', message: 'retentionDays must be 0 or a positive integer' },
+				{
+					error: 'invalid_retention_days',
+					message: 'retentionDays must be 0 or a positive integer',
+				},
 				400,
 			);
 		}

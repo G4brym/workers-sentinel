@@ -61,7 +61,7 @@ watch(
 				<ul v-else class="space-y-1">
 					<li v-for="project in projectsStore.projects" :key="project.id">
 						<RouterLink
-							:to="`/projects/${project.slug}/issues`"
+							:to="`/projects/${project.slug}/overview`"
 							class="flex items-center px-3 py-2 rounded-lg text-sm"
 							:class="
 								currentSlug === project.slug
@@ -123,6 +123,17 @@ watch(
 						<span class="badge badge-info">{{ currentProject.platform }}</span>
 					</div>
 					<div class="flex items-center space-x-2">
+						<RouterLink
+							:to="`/projects/${currentProject.slug}/overview`"
+							class="px-3 py-1.5 text-sm rounded-lg"
+							:class="
+								route.name === 'project-overview'
+									? 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'
+									: 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+							"
+						>
+							Overview
+						</RouterLink>
 						<RouterLink
 							:to="`/projects/${currentProject.slug}/issues`"
 							class="px-3 py-1.5 text-sm rounded-lg"

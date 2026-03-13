@@ -37,6 +37,33 @@ async function getProjectWithAccess(
 	return response.json();
 }
 
+// Get project summary/overview
+// GET /api/projects/:slug/summary
+issueRoutes.get('/:slug/summary', async (c) => {
+	const slug = c.req.param('slug');
+	const projectResult = await getProjectWithAccess(c, slug);
+
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/summary', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}',
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data);
+});
+
 // List environments for a project
 // GET /api/projects/:slug/environments
 issueRoutes.get('/:slug/environments', async (c) => {
