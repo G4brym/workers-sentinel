@@ -1,31 +1,6 @@
 import { SELF } from 'cloudflare:test';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { createTestUser, loginUser } from './utils';
-
-// Helper to retry requests that might fail due to DO reset
-async function fetchWithRetry(url: string, options: RequestInit, retries = 5): Promise<Response> {
-	for (let i = 0; i < retries; i++) {
-		try {
-			const response = await SELF.fetch(url, options);
-			if (response.ok) return response;
-
-			// Check for DO reset error
-			const text = await response.clone().text();
-			if (text.includes('invalidating this Durable Object') && i < retries - 1) {
-				await new Promise((r) => setTimeout(r, 200 * (i + 1)));
-				continue;
-			}
-			return response;
-		} catch (e) {
-			if (i < retries - 1) {
-				await new Promise((r) => setTimeout(r, 200 * (i + 1)));
-				continue;
-			}
-			throw e;
-		}
-	}
-	return SELF.fetch(url, options);
-}
+import { describe, expect, it } from 'vitest';
+import { createTestUser } from './utils';
 
 describe('Auth Routes', () => {
 	describe('POST /api/auth/register', () => {

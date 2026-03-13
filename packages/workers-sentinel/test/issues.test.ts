@@ -517,6 +517,152 @@ describe('Issues Routes', () => {
 		});
 	});
 
+	describe('Environment filtering', () => {
+		let envUser: Awaited<ReturnType<typeof createTestUser>>;
+		let envProject: Awaited<ReturnType<typeof createTestProject>>;
+
+		beforeAll(async () => {
+			envUser = await createTestUser({
+				email: `env-filter-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Env Filter User',
+			});
+			envProject = await createTestProject(envUser.token!, { name: 'Env Filter Project' });
+
+			// Send events with different environments
+			await sendTestEvent(envProject.id, envProject.publicKey, {
+				exception: { type: 'Error', value: 'Prod error 1' },
+				environment: 'production',
+			});
+			await sendTestEvent(envProject.id, envProject.publicKey, {
+				exception: { type: 'TypeError', value: 'Staging error 1' },
+				environment: 'staging',
+			});
+			await sendTestEvent(envProject.id, envProject.publicKey, {
+				exception: {
+					type: 'ReferenceError',
+					value: 'No env error',
+					stacktrace: {
+						frames: [{ filename: 'noenv.js', function: 'test', lineno: 1, in_app: true }],
+					},
+				},
+			});
+		});
+
+		it('should filter issues by environment', async () => {
+			const response = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?environment=production`,
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { issues: Array<{ id: string; title: string }> };
+
+			expect(data.issues).toBeDefined();
+			expect(data.issues.length).toBe(1);
+		});
+
+		it('should return all issues when no environment filter is set', async () => {
+			const response = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?status=`,
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { issues: Array<{ id: string }> };
+
+			expect(data.issues.length).toBe(3);
+		});
+
+		it('should return empty list for non-existent environment', async () => {
+			const response = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?environment=nonexistent`,
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { issues: Array<{ id: string }> };
+
+			expect(data.issues.length).toBe(0);
+		});
+
+		it('should list project environments', async () => {
+			const response = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/environments`,
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as {
+				environments: Array<{ name: string; issueCount: number; lastSeen: string }>;
+			};
+
+			expect(data.environments).toBeDefined();
+			expect(data.environments.length).toBe(2);
+
+			const envNames = data.environments.map((e) => e.name).sort();
+			expect(envNames).toEqual(['production', 'staging']);
+
+			for (const env of data.environments) {
+				expect(env.issueCount).toBe(1);
+				expect(env.lastSeen).toBeDefined();
+			}
+		});
+
+		it('should return same issue when it appears in multiple environments', async () => {
+			// Send same exception type/value to both production and staging
+			await sendTestEvent(envProject.id, envProject.publicKey, {
+				exception: { type: 'Error', value: 'Prod error 1' },
+				environment: 'staging',
+			});
+
+			// The issue should now appear in both environments
+			const prodResponse = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?environment=production`,
+			);
+			const prodData = (await prodResponse.json()) as {
+				issues: Array<{ id: string; title: string }>;
+			};
+
+			const stagingResponse = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/issues?environment=staging`,
+			);
+			const stagingData = (await stagingResponse.json()) as {
+				issues: Array<{ id: string; title: string }>;
+			};
+
+			// The "Prod error 1" issue should appear in both environment filters
+			const prodIssueIds = prodData.issues.map((i) => i.id);
+			const stagingIssueIds = stagingData.issues.map((i) => i.id);
+			const sharedIssues = prodIssueIds.filter((id) => stagingIssueIds.includes(id));
+			expect(sharedIssues.length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('should track environment counts correctly', async () => {
+			// Send another event for the same issue in production
+			await sendTestEvent(envProject.id, envProject.publicKey, {
+				exception: { type: 'Error', value: 'Prod error 1' },
+				environment: 'production',
+			});
+
+			const response = await authFetch(
+				envUser.token!,
+				`http://localhost/api/projects/${envProject.slug}/environments`,
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as {
+				environments: Array<{ name: string; issueCount: number }>;
+			};
+
+			const prodEnv = data.environments.find((e) => e.name === 'production');
+			expect(prodEnv).toBeDefined();
+			expect(prodEnv!.issueCount).toBe(1); // Still 1 issue, just more events
+		});
+	});
+
 	describe('GET /api/projects/:slug/events/:eventId', () => {
 		it('should get a specific event by ID', async () => {
 			// Get issues first

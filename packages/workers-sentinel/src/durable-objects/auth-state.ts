@@ -551,10 +551,7 @@ export class AuthState extends DurableObject<Env> {
 			.toArray();
 
 		if (memberRows.length === 0) {
-			return this.jsonResponse(
-				{ error: 'forbidden', message: 'No access to this project' },
-				403,
-			);
+			return this.jsonResponse({ error: 'forbidden', message: 'No access to this project' }, 403);
 		}
 
 		// Only owner/admin can update settings
@@ -577,10 +574,7 @@ export class AuthState extends DurableObject<Env> {
 					);
 				}
 			} catch {
-				return this.jsonResponse(
-					{ error: 'invalid_url', message: 'Invalid webhook URL' },
-					400,
-				);
+				return this.jsonResponse({ error: 'invalid_url', message: 'Invalid webhook URL' }, 400);
 			}
 		}
 

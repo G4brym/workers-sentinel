@@ -20,7 +20,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 
 	const token = getToken();
 	if (token) {
-		headers['Authorization'] = `Bearer ${token}`;
+		headers.Authorization = `Bearer ${token}`;
 	}
 
 	const response = await fetch(url, {

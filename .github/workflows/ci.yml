@@ -30,5 +30,8 @@ jobs:
       - name: Typecheck
         run: pnpm --filter workers-sentinel typecheck
 
+      - name: Build dashboard
+        run: pnpm --filter @workers-sentinel/dashboard build
+
       - name: Run tests
         run: pnpm --filter workers-sentinel test

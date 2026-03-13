@@ -37,6 +37,33 @@ async function getProjectWithAccess(
 	return response.json();
 }
 
+// List environments for a project
+// GET /api/projects/:slug/environments
+issueRoutes.get('/:slug/environments', async (c) => {
+	const slug = c.req.param('slug');
+	const projectResult = await getProjectWithAccess(c, slug);
+
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/environments', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data);
+});
+
 // List issues for a project
 // GET /api/projects/:slug/issues
 issueRoutes.get('/:slug/issues', async (c) => {

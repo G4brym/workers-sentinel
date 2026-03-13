@@ -7,7 +7,15 @@
 	},
 	"files": {
 		"ignoreUnknown": false,
-		"includes": ["**", "!**/node_modules", "!**/dist", "!**/.wrangler", "!**/*.d.ts"]
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/dist",
+			"!**/.wrangler",
+			"!**/*.d.ts",
+			"!template",
+			"!.changeset"
+		]
 	},
 	"formatter": {
 		"enabled": true,
@@ -25,6 +33,9 @@
 			},
 			"style": {
 				"noNonNullAssertion": "off"
+			},
+			"suspicious": {
+				"noImplicitAnyLet": "warn"
 			}
 		}
 	},
@@ -33,6 +44,34 @@
 			"quoteStyle": "single",
 			"trailingCommas": "all",
 			"semicolons": "always"
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["**/*.vue"],
+			"linter": {
+				"rules": {
+					"correctness": {
+						"noUnusedImports": "off",
+						"noUnusedVariables": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/*.css"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noUnknownAtRules": "off"
+					}
+				}
+			}
+		}
+	],
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
 		}
 	}
 }

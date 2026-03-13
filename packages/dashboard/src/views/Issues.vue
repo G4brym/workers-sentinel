@@ -38,6 +38,8 @@ const issues = ref<Issue[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const statusFilter = ref<string>('unresolved');
+const environmentFilter = ref<string>('');
+const environments = ref<Array<{ name: string; issueCount: number }>>([]);
 const hasMore = ref(false);
 const nextCursor = ref<string | undefined>();
 const dsn = ref<string>('');
@@ -129,6 +131,9 @@ async function loadIssues(append = false) {
 		if (statusFilter.value) {
 			params.set('status', statusFilter.value);
 		}
+		if (environmentFilter.value) {
+			params.set('environment', environmentFilter.value);
+		}
 		if (append && nextCursor.value) {
 			params.set('cursor', nextCursor.value);
 		}
@@ -201,6 +206,17 @@ async function loadDsn() {
 	}
 }
 
+async function loadEnvironments() {
+	try {
+		const response = await api.get<{
+			environments: Array<{ name: string; issueCount: number; lastSeen: string }>;
+		}>(`/api/projects/${slug.value}/environments`);
+		environments.value = response.environments;
+	} catch {
+		// Ignore - environment selector will just be empty
+	}
+}
+
 async function updateStatus(issue: Issue, newStatus: string) {
 	try {
 		await api.patch(`/api/projects/${slug.value}/issues/${issue.id}`, { status: newStatus });
@@ -237,9 +253,11 @@ function getLevelBadgeClass(level: string): string {
 onMounted(() => {
 	loadIssues();
 	loadTagFacets();
+	loadEnvironments();
 });
 
 watch(statusFilter, () => loadIssues());
+watch(environmentFilter, () => loadIssues());
 watch(slug, () => loadIssues());
 </script>
 
@@ -263,6 +281,12 @@ watch(slug, () => loadIssues());
 				<option value="">{{ facet.key }}</option>
 				<option v-for="tv in facet.topValues" :key="tv.value" :value="tv.value">
 					{{ tv.value }} ({{ tv.issueCount }})
+				</option>
+			</select>
+			<select v-if="environments.length > 0" v-model="environmentFilter" class="input w-auto">
+				<option value="">All Environments</option>
+				<option v-for="env in environments" :key="env.name" :value="env.name">
+					{{ env.name }} ({{ env.issueCount }})
 				</option>
 			</select>
 			<label

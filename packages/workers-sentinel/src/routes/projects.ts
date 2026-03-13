@@ -326,7 +326,10 @@ projectRoutes.post('/:slug/test-webhook', async (c) => {
 		return c.json({ success: true });
 	} catch (err) {
 		return c.json(
-			{ error: 'webhook_error', message: err instanceof Error ? err.message : 'Failed to reach webhook URL' },
+			{
+				error: 'webhook_error',
+				message: err instanceof Error ? err.message : 'Failed to reach webhook URL',
+			},
 			502,
 		);
 	}
