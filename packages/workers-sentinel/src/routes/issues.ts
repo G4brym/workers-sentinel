@@ -211,6 +211,7 @@ issueRoutes.get('/:slug/issues/:issueId', async (c) => {
 const updateIssueHandler = async (c: AppContext) => {
 	const slug = c.req.param('slug');
 	const issueId = c.req.param('issueId');
+	const auth = c.get('auth');
 
 	const projectResult = await getProjectWithAccess(c, slug);
 	if (projectResult instanceof Response) {
@@ -231,6 +232,8 @@ const updateIssueHandler = async (c: AppContext) => {
 				issueId,
 				status: body.status,
 				assignee: body.assignee,
+				userId: auth?.user.id,
+				userName: auth?.user.name,
 			}),
 		}),
 	);
@@ -353,4 +356,144 @@ issueRoutes.get('/:slug/tags/:key/values', async (c) => {
 	);
 
 	return c.json(await response.json());
+});
+
+// Get comments for an issue
+// GET /api/projects/:slug/issues/:issueId/comments
+issueRoutes.get('/:slug/issues/:issueId/comments', async (c) => {
+	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issue/comments', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ issueId }),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data);
+});
+
+// Add a comment to an issue
+// POST /api/projects/:slug/issues/:issueId/comments
+issueRoutes.post('/:slug/issues/:issueId/comments', async (c) => {
+	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
+	const auth = c.get('auth');
+
+	if (!auth) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+	const body = await c.req.json<{ body: string }>();
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issue/comment/add', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				issueId,
+				userId: auth.user.id,
+				userName: auth.user.name,
+				body: body.body,
+			}),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data, response.status as 201 | 400);
+});
+
+// Delete a comment
+// DELETE /api/projects/:slug/issues/:issueId/comments/:commentId
+issueRoutes.delete('/:slug/issues/:issueId/comments/:commentId', async (c) => {
+	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
+	const commentId = c.req.param('commentId');
+	const auth = c.get('auth');
+
+	if (!auth) {
+		return c.json({ error: 'unauthorized' }, 401);
+	}
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issue/comment/delete', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				commentId,
+				userId: auth.user.id,
+				issueId,
+			}),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data, response.status as 200 | 403 | 404);
+});
+
+// Get activity timeline for an issue
+// GET /api/projects/:slug/issues/:issueId/activity
+issueRoutes.get('/:slug/issues/:issueId/activity', async (c) => {
+	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+
+	const cursor = c.req.query('cursor');
+	const limit = c.req.query('limit');
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issue/activity', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				issueId,
+				cursor,
+				limit: limit ? parseInt(limit, 10) : undefined,
+			}),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data);
 });
