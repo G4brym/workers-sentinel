@@ -1,19 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { authFetch, createTestProject, createTestUser, sendTestEvent } from './utils';
 
 describe('Release Tracking', () => {
-	let testUser: Awaited<ReturnType<typeof createTestUser>>;
-	let testProject: Awaited<ReturnType<typeof createTestProject>>;
-
-	beforeAll(async () => {
-		testUser = await createTestUser({
-			email: `release-test-${Date.now()}@example.com`,
-			password: 'testpassword123',
-			name: 'Release Test User',
-		});
-		testProject = await createTestProject(testUser.token!, { name: 'Release Test Project' });
-	});
-
 	describe('Release creation during ingestion', () => {
 		it('should create a release when event has release field', async () => {
 			const user = await createTestUser({
@@ -380,6 +368,24 @@ describe('Release Tracking', () => {
 			};
 
 			expect(data.releases.length).toBe(0);
+		});
+	});
+
+	describe('Release not found', () => {
+		it('should return 404 for a non-existent release version', async () => {
+			const user = await createTestUser({
+				email: `release-notfound-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Release NotFound Test',
+			});
+			const project = await createTestProject(user.token!, { name: 'Release NotFound Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/releases/${encodeURIComponent('nonexistent@9.9.9')}`,
+			);
+
+			expect(response.status).toBe(404);
 		});
 	});
 
