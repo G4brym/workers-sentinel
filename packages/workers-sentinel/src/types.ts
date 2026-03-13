@@ -65,6 +65,7 @@ export interface Issue {
 	count: number;
 	userCount: number;
 	status: 'unresolved' | 'resolved' | 'ignored';
+	snoozedUntil: string | null;
 	metadata: IssueMetadata;
 }
 

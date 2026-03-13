@@ -15,6 +15,7 @@ interface Issue {
 	count: number;
 	userCount: number;
 	status: string;
+	snoozedUntil: string | null;
 	metadata: {
 		type: string;
 		value: string;
@@ -270,6 +271,7 @@ watch(slug, () => loadIssues());
 				<option value="unresolved">Unresolved</option>
 				<option value="resolved">Resolved</option>
 				<option value="ignored">Ignored</option>
+				<option value="snoozed">Snoozed</option>
 			</select>
 			<select
 				v-for="facet in tagFacets"
@@ -509,6 +511,12 @@ Sentry.init({
 								{{ formatTimeAgo(issue.lastSeen) }}
 							</p>
 						</div>
+						<p
+							v-if="issue.snoozedUntil && new Date(issue.snoozedUntil) > new Date()"
+							class="mt-1 text-xs text-warning-600 dark:text-warning-400"
+						>
+							Snoozed until {{ new Date(issue.snoozedUntil).toLocaleString() }}
+						</p>
 					</div>
 
 					<!-- Quick actions -->

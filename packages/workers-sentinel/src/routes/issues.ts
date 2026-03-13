@@ -273,6 +273,81 @@ issueRoutes.delete('/:slug/issues/:issueId', async (c) => {
 	return c.json(data);
 });
 
+// Snooze an issue
+// POST /api/projects/:slug/issues/:issueId/snooze
+issueRoutes.post('/:slug/issues/:issueId/snooze', async (c) => {
+	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+	const { duration } = await c.req.json<{ duration: string }>();
+
+	const presets: Record<string, number> = {
+		'1h': 60 * 60 * 1000,
+		'1d': 24 * 60 * 60 * 1000,
+		'3d': 3 * 24 * 60 * 60 * 1000,
+		'1w': 7 * 24 * 60 * 60 * 1000,
+	};
+
+	let snoozedUntil: string;
+	if (presets[duration]) {
+		snoozedUntil = new Date(Date.now() + presets[duration]).toISOString();
+	} else {
+		const parsed = new Date(duration);
+		if (Number.isNaN(parsed.getTime()) || parsed <= new Date()) {
+			return c.json({ error: 'invalid_duration' }, 400);
+		}
+		snoozedUntil = parsed.toISOString();
+	}
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issue/snooze', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ issueId, duration: snoozedUntil }),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data, response.status as 200 | 400 | 404);
+});
+
+// Unsnooze an issue
+// DELETE /api/projects/:slug/issues/:issueId/snooze
+issueRoutes.delete('/:slug/issues/:issueId/snooze', async (c) => {
+	const slug = c.req.param('slug');
+	const issueId = c.req.param('issueId');
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issue/unsnooze', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ issueId }),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data);
+});
+
 // Get project stats
 // GET /api/projects/:slug/stats
 issueRoutes.get('/:slug/stats', async (c) => {

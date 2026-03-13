@@ -149,6 +149,10 @@ CREATE TABLE IF NOT EXISTS release_issues (
 CREATE INDEX IF NOT EXISTS idx_release_issues_issue_id ON release_issues(issue_id);
 `;
 
+const MIGRATIONS = `
+ALTER TABLE issues ADD COLUMN snoozed_until TEXT;
+`;
+
 export class ProjectState extends DurableObject<Env> {
 	private sql: SqlStorage;
 	private initialized = false;
@@ -163,16 +167,19 @@ export class ProjectState extends DurableObject<Env> {
 	private async ensureSchema(): Promise<void> {
 		if (this.initialized) return;
 		this.sql.exec(SCHEMA);
+		try {
+			this.sql.exec(MIGRATIONS);
+		} catch {
+			// Column already exists — migration already applied
+		}
+		this.sql.exec('CREATE INDEX IF NOT EXISTS idx_issues_snoozed_until ON issues(snoozed_until)');
 		this.warmRateLimitCounter();
 		this.initialized = true;
 
-		// Schedule cleanup alarm if retention is enabled and no alarm exists
+		// Schedule alarm if none exists (retention or pending snoozes)
 		const alarm = await this.ctx.storage.getAlarm();
 		if (!alarm) {
-			const retentionDays = this.getRetentionDays();
-			if (retentionDays > 0) {
-				await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
-			}
+			await this.scheduleNextAlarm();
 		}
 	}
 
@@ -234,6 +241,10 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetReleases(request);
 				case '/release':
 					return this.handleGetRelease(request);
+				case '/issue/snooze':
+					return this.handleSnoozeIssue(request);
+				case '/issue/unsnooze':
+					return this.handleUnsnoozeIssue(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -524,13 +535,23 @@ export class ProjectState extends DurableObject<Env> {
 		const pageLimit = Math.min(limit || 25, 100);
 		const sortField = sort && ProjectState.ALLOWED_SORT_FIELDS.has(sort) ? sort : 'last_seen';
 		const sortOrder = 'DESC';
+		const now = new Date().toISOString();
 
 		let sql = 'SELECT * FROM issues WHERE 1=1';
 		const params: (string | number)[] = [];
 
-		if (status) {
-			sql += ' AND status = ?';
-			params.push(status);
+		if (status === 'snoozed') {
+			// Show only currently snoozed issues
+			sql += ' AND snoozed_until IS NOT NULL AND snoozed_until > ?';
+			params.push(now);
+		} else {
+			if (status) {
+				sql += ' AND status = ?';
+				params.push(status);
+			}
+			// Hide snoozed issues from default views
+			sql += ' AND (snoozed_until IS NULL OR snoozed_until <= ?)';
+			params.push(now);
 		}
 
 		if (level) {
@@ -1213,6 +1234,74 @@ export class ProjectState extends DurableObject<Env> {
 		return this.jsonResponse({ activity, nextCursor, hasMore });
 	}
 
+	private async scheduleNextAlarm(): Promise<void> {
+		const candidates: number[] = [];
+
+		// Consider retention schedule if enabled
+		const retentionDays = this.getRetentionDays();
+		if (retentionDays > 0) {
+			candidates.push(Date.now() + MS_PER_DAY);
+		}
+
+		// Consider earliest pending snooze expiry
+		const rows = this.sql
+			.exec(
+				'SELECT MIN(snoozed_until) as next FROM issues WHERE snoozed_until IS NOT NULL AND snoozed_until > ?',
+				new Date().toISOString(),
+			)
+			.toArray();
+
+		const next = rows[0]?.next as string | null;
+		if (next) {
+			candidates.push(new Date(next).getTime());
+		}
+
+		if (candidates.length > 0) {
+			await this.ctx.storage.setAlarm(Math.min(...candidates));
+		}
+	}
+
+	private async handleSnoozeIssue(request: Request): Promise<Response> {
+		const { issueId, duration } = (await request.json()) as {
+			issueId: string;
+			duration: string;
+		};
+
+		if (!issueId || !duration) {
+			return this.jsonResponse({ error: 'missing_parameters' }, 400);
+		}
+
+		const rows = this.sql.exec('SELECT id FROM issues WHERE id = ?', issueId).toArray();
+		if (rows.length === 0) {
+			return this.jsonResponse({ error: 'issue_not_found' }, 404);
+		}
+
+		this.sql.exec('UPDATE issues SET snoozed_until = ? WHERE id = ?', duration, issueId);
+
+		await this.scheduleNextAlarm();
+
+		const row = this.sql.exec('SELECT * FROM issues WHERE id = ?', issueId).one();
+		return this.jsonResponse({ issue: row ? this.rowToIssue(row) : null });
+	}
+
+	private async handleUnsnoozeIssue(request: Request): Promise<Response> {
+		const { issueId } = (await request.json()) as { issueId: string };
+
+		if (!issueId) {
+			return this.jsonResponse({ error: 'missing_issue_id' }, 400);
+		}
+
+		const rows = this.sql.exec('SELECT id FROM issues WHERE id = ?', issueId).toArray();
+		if (rows.length === 0) {
+			return this.jsonResponse({ error: 'issue_not_found' }, 404);
+		}
+
+		this.sql.exec('UPDATE issues SET snoozed_until = NULL WHERE id = ?', issueId);
+
+		const row = this.sql.exec('SELECT * FROM issues WHERE id = ?', issueId).one();
+		return this.jsonResponse({ issue: row ? this.rowToIssue(row) : null });
+	}
+
 	private getHourBucket(timestamp: string): string {
 		const date = new Date(timestamp);
 		date.setMinutes(0, 0, 0);
@@ -1248,6 +1337,7 @@ export class ProjectState extends DurableObject<Env> {
 			count: row.count as number,
 			userCount: row.user_count as number,
 			status: row.status as Issue['status'],
+			snoozedUntil: (row.snoozed_until as string) || null,
 			metadata: JSON.parse((row.metadata as string) || '{}'),
 		};
 	}
@@ -1350,43 +1440,51 @@ export class ProjectState extends DurableObject<Env> {
 
 	async alarm(): Promise<void> {
 		await this.ensureSchema();
+		const now = new Date().toISOString();
 
+		// Un-snooze all issues whose snooze has expired
+		this.sql.exec(
+			'UPDATE issues SET snoozed_until = NULL WHERE snoozed_until IS NOT NULL AND snoozed_until <= ?',
+			now,
+		);
+
+		// Handle data retention if enabled
 		const retentionDays = this.getRetentionDays();
-		if (retentionDays <= 0) return;
+		if (retentionDays > 0) {
+			const cutoffDate = new Date(Date.now() - retentionDays * MS_PER_DAY).toISOString();
 
-		const cutoffDate = new Date(Date.now() - retentionDays * MS_PER_DAY).toISOString();
+			// Delete old events
+			this.sql.exec('DELETE FROM events WHERE received_at < ?', cutoffDate);
 
-		// Delete old events
-		this.sql.exec('DELETE FROM events WHERE received_at < ?', cutoffDate);
+			// Delete old issue_stats buckets
+			this.sql.exec('DELETE FROM issue_stats WHERE bucket < ?', cutoffDate);
 
-		// Delete old issue_stats buckets
-		this.sql.exec('DELETE FROM issue_stats WHERE bucket < ?', cutoffDate);
+			// Clean up issue_users whose last activity is before the cutoff
+			this.sql.exec('DELETE FROM issue_users WHERE last_seen < ?', cutoffDate);
 
-		// Clean up issue_users whose last activity is before the cutoff
-		this.sql.exec('DELETE FROM issue_users WHERE last_seen < ?', cutoffDate);
+			// Recalculate issue counts from remaining events
+			this.sql.exec(`
+				UPDATE issues SET count = (
+					SELECT COUNT(*) FROM events WHERE events.issue_id = issues.id
+				)
+			`);
 
-		// Recalculate issue counts from remaining events
-		this.sql.exec(`
-			UPDATE issues SET count = (
-				SELECT COUNT(*) FROM events WHERE events.issue_id = issues.id
-			)
-		`);
+			// Recalculate user counts from remaining issue_users
+			this.sql.exec(`
+				UPDATE issues SET user_count = (
+					SELECT COUNT(*) FROM issue_users WHERE issue_users.issue_id = issues.id
+				)
+			`);
 
-		// Recalculate user counts from remaining issue_users
-		this.sql.exec(`
-			UPDATE issues SET user_count = (
-				SELECT COUNT(*) FROM issue_users WHERE issue_users.issue_id = issues.id
-			)
-		`);
+			// Delete issues with no remaining events
+			this.sql.exec('DELETE FROM issues WHERE count = 0');
 
-		// Delete issues with no remaining events
-		this.sql.exec('DELETE FROM issues WHERE count = 0');
+			// Clean up orphaned issue_users for deleted issues
+			this.sql.exec('DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)');
+		}
 
-		// Clean up orphaned issue_users for deleted issues
-		this.sql.exec('DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)');
-
-		// Reschedule alarm for tomorrow
-		await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+		// Schedule next alarm (earliest of next retention run or next snooze expiry)
+		await this.scheduleNextAlarm();
 	}
 
 	private getRetentionDays(): number {
@@ -1421,13 +1519,8 @@ export class ProjectState extends DurableObject<Env> {
 			String(retentionDays),
 		);
 
-		if (retentionDays > 0) {
-			// Schedule alarm for cleanup (24 hours from now)
-			await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
-		} else {
-			// Disable retention — cancel any pending alarm
-			await this.ctx.storage.deleteAlarm();
-		}
+		// Reschedule alarm considering both retention and pending snoozes
+		await this.scheduleNextAlarm();
 
 		return this.jsonResponse({ retentionDays });
 	}
