@@ -103,6 +103,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint
 - **⚡ Rate Limiting**: Configurable per-project event quotas to prevent runaway error loops from overwhelming the system
 - **🗑️ Data Retention**: Configurable per-project retention policies with automatic cleanup
+- **🗺️ Source Maps**: Upload source maps per release to resolve minified stack traces back to original source locations
 
 ## Prerequisites
 
@@ -386,7 +387,7 @@ Each project has its own isolated Durable Object with SQLite storage, ensuring d
 
 Planned features for future releases:
 
-- [ ] Source map support for JavaScript errors
+- [x] Source map support for JavaScript errors
 - [ ] Release tracking and deployment correlation
 - [ ] Performance monitoring (transactions, spans)
 - [x] Webhook alerting notifications
@@ -402,7 +403,6 @@ Planned features for future releases:
 ## Known Limitations
 
 **Current Limitations:**
-- No source map support yet (stack traces show minified code)
 - No performance monitoring (error tracking only)
 - Email notifications not yet available (webhooks supported)
 - No project ownership transfer (creator remains permanent owner)

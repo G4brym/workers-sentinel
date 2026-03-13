@@ -110,6 +110,15 @@ export interface Release {
 	newIssueCount: number;
 }
 
+// Source map types
+export interface SourceMap {
+	id: string;
+	release: string;
+	fileUrl: string;
+	createdAt: string;
+	size: number;
+}
+
 // Sentry event types
 export interface SentryEvent {
 	event_id: string;

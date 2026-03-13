@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
+import { type ResolvedFrame, resolveFrame } from '../lib/sourcemap-resolver';
 
 interface Issue {
 	id: string;
@@ -85,6 +86,9 @@ const selectedEvent = ref<Event | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const expandedFrames = ref<Set<number>>(new Set());
+const showOriginal = ref(true);
+const resolvedFrames = ref<Map<number, ResolvedFrame>>(new Map());
+const resolving = ref(false);
 const activity = ref<Activity[]>([]);
 const newComment = ref('');
 const submittingComment = ref(false);
@@ -144,12 +148,42 @@ async function loadIssue() {
 		events.value = eventsResponse.events;
 		selectedEvent.value = eventsResponse.events[0] || null;
 		activity.value = activityResponse.activity;
+		resolveStackFrames();
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load issue';
 	} finally {
 		loading.value = false;
 	}
 }
+
+async function resolveStackFrames() {
+	const event = selectedEvent.value;
+	if (!event?.release || !event.exception?.values?.[0]?.stacktrace?.frames) {
+		return;
+	}
+
+	resolving.value = true;
+	const frames = getStackFrames();
+	const newResolved = new Map<number, ResolvedFrame>();
+
+	const promises = frames.map(async (frame, displayIndex) => {
+		const result = await resolveFrame(slug.value, event.release!, {
+			filename: frame.filename,
+			lineno: frame.lineno,
+			colno: frame.colno,
+		});
+		newResolved.set(displayIndex, result);
+	});
+
+	await Promise.all(promises);
+	resolvedFrames.value = newResolved;
+	resolving.value = false;
+}
+
+watch(selectedEvent, () => {
+	resolvedFrames.value = new Map();
+	resolveStackFrames();
+});
 
 async function updateStatus(newStatus: string) {
 	if (!issue.value) return;
@@ -395,8 +429,22 @@ onBeforeUnmount(() => {
 				<div class="lg:col-span-2 space-y-4">
 					<!-- Exception -->
 					<div class="card">
-						<div class="p-4 border-b border-gray-200 dark:border-gray-700">
+						<div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
 							<h2 class="font-semibold text-gray-900 dark:text-white">Stack Trace</h2>
+							<div v-if="resolvedFrames.size > 0" class="flex items-center space-x-2">
+								<span class="text-xs text-gray-500">{{ showOriginal ? 'Original' : 'Minified' }}</span>
+								<button
+									class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
+									:class="showOriginal ? 'bg-primary-600' : 'bg-gray-300 dark:bg-gray-600'"
+									@click="showOriginal = !showOriginal"
+								>
+									<span
+										class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform"
+										:class="showOriginal ? 'translate-x-4' : 'translate-x-0.5'"
+									/>
+								</button>
+							</div>
+							<div v-else-if="resolving" class="text-xs text-gray-400">Resolving source maps...</div>
 						</div>
 
 						<div v-if="getStackFrames().length === 0" class="p-4 text-gray-500">
@@ -426,11 +474,24 @@ onBeforeUnmount(() => {
 													class="w-2 h-2 bg-gray-300 rounded-full"
 													title="System frame"
 												></span>
-												<code class="text-sm font-medium text-gray-900 dark:text-white truncate">
+												<template v-if="showOriginal && resolvedFrames.get(index)?.resolved">
+													<code class="text-sm font-medium text-gray-900 dark:text-white truncate">
+														{{ resolvedFrames.get(index)!.originalFunction || frame.function || '(anonymous)' }}
+													</code>
+													<span class="text-xs text-green-500 ml-1" title="Resolved via source map">mapped</span>
+												</template>
+												<code v-else class="text-sm font-medium text-gray-900 dark:text-white truncate">
 													{{ frame.function || '(anonymous)' }}
 												</code>
 											</div>
-											<p class="text-xs text-gray-500 mt-1 truncate">
+											<template v-if="showOriginal && resolvedFrames.get(index)?.resolved">
+												<p class="text-xs text-gray-500 mt-1 truncate">
+													<span class="text-primary-500">{{ resolvedFrames.get(index)!.originalFilename }}</span>
+													<span v-if="resolvedFrames.get(index)!.originalLineno">:{{ resolvedFrames.get(index)!.originalLineno }}</span>
+													<span v-if="resolvedFrames.get(index)!.originalColno">:{{ resolvedFrames.get(index)!.originalColno }}</span>
+												</p>
+											</template>
+											<p v-else class="text-xs text-gray-500 mt-1 truncate">
 												{{ frame.filename }}
 												<span v-if="frame.lineno">:{{ frame.lineno }}</span>
 												<span v-if="frame.colno">:{{ frame.colno }}</span>
