@@ -140,6 +140,8 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleUpdateIssue(request);
 				case '/issue/delete':
 					return this.handleDeleteIssue(request);
+				case '/issues/bulk-update':
+					return this.handleBulkUpdateIssues(request);
 				case '/issue/events':
 					return this.handleGetIssueEvents(request);
 				case '/event':
@@ -496,6 +498,51 @@ export class ProjectState extends DurableObject<Env> {
 		this.sql.exec('DELETE FROM issues WHERE id = ?', issueId);
 
 		return this.jsonResponse({ success: true });
+	}
+
+	private async handleBulkUpdateIssues(request: Request): Promise<Response> {
+		const { issueIds, status, action } = (await request.json()) as {
+			issueIds: string[];
+			status?: string;
+			action?: 'delete';
+		};
+
+		if (!issueIds || !Array.isArray(issueIds) || issueIds.length === 0) {
+			return this.jsonResponse({ error: 'missing_issue_ids' }, 400);
+		}
+
+		if (issueIds.length > 100) {
+			return this.jsonResponse(
+				{ error: 'too_many_issues', message: 'Maximum 100 issues per bulk operation' },
+				400,
+			);
+		}
+
+		const validStatuses = new Set(['unresolved', 'resolved', 'ignored']);
+		if (status && !validStatuses.has(status)) {
+			return this.jsonResponse({ error: 'invalid_status' }, 400);
+		}
+
+		const placeholders = issueIds.map(() => '?').join(', ');
+
+		if (action === 'delete') {
+			const cursor = this.sql.exec(
+				`DELETE FROM issues WHERE id IN (${placeholders})`,
+				...issueIds,
+			);
+			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
+		}
+
+		if (status) {
+			const cursor = this.sql.exec(
+				`UPDATE issues SET status = ? WHERE id IN (${placeholders})`,
+				status,
+				...issueIds,
+			);
+			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
+		}
+
+		return this.jsonResponse({ error: 'no_action' }, 400);
 	}
 
 	private async handleGetIssueEvents(request: Request): Promise<Response> {

@@ -284,6 +284,239 @@ describe('Issues Routes', () => {
 		});
 	});
 
+	describe('PATCH /api/projects/:slug/issues/bulk', () => {
+		it('should bulk resolve multiple issues', async () => {
+			const user = await createTestUser({
+				email: `bulk-resolve-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk Resolve User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk Resolve Project' });
+
+			await sendTestEvent(project.id, project.publicKey, {
+				exception: { type: 'Error', value: 'Bulk error 1' },
+			});
+			await sendTestEvent(project.id, project.publicKey, {
+				exception: { type: 'TypeError', value: 'Bulk error 2' },
+			});
+			await sendTestEvent(project.id, project.publicKey, {
+				exception: { type: 'RangeError', value: 'Bulk error 3' },
+			});
+
+			const listResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
+			const listData = (await listResponse.json()) as {
+				issues: Array<{ id: string; status: string }>;
+			};
+			expect(listData.issues.length).toBe(3);
+
+			const idsToResolve = [listData.issues[0].id, listData.issues[1].id];
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: idsToResolve, status: 'resolved' }),
+				},
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { success: boolean; affected: number };
+			expect(data.success).toBe(true);
+			expect(data.affected).toBe(2);
+
+			// Verify the resolved issues
+			for (const id of idsToResolve) {
+				const issueResponse = await authFetch(
+					user.token!,
+					`http://localhost/api/projects/${project.slug}/issues/${id}`,
+				);
+				const issueData = (await issueResponse.json()) as {
+					issue: { status: string };
+				};
+				expect(issueData.issue.status).toBe('resolved');
+			}
+
+			// Verify the third issue is still unresolved
+			const thirdResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/${listData.issues[2].id}`,
+			);
+			const thirdData = (await thirdResponse.json()) as {
+				issue: { status: string };
+			};
+			expect(thirdData.issue.status).toBe('unresolved');
+		});
+
+		it('should bulk delete issues', async () => {
+			const user = await createTestUser({
+				email: `bulk-delete-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk Delete User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk Delete Project' });
+
+			await sendTestEvent(project.id, project.publicKey, {
+				exception: { type: 'Error', value: 'Delete me 1' },
+			});
+			await sendTestEvent(project.id, project.publicKey, {
+				exception: { type: 'TypeError', value: 'Delete me 2' },
+			});
+
+			const listResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues`,
+			);
+			const listData = (await listResponse.json()) as {
+				issues: Array<{ id: string }>;
+			};
+			const idsToDelete = listData.issues.map((i) => i.id);
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: idsToDelete, action: 'delete' }),
+				},
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { success: boolean };
+			expect(data.success).toBe(true);
+
+			// Verify deletion
+			for (const id of idsToDelete) {
+				const getResponse = await authFetch(
+					user.token!,
+					`http://localhost/api/projects/${project.slug}/issues/${id}`,
+				);
+				expect(getResponse.status).toBe(404);
+			}
+		});
+
+		it('should return 400 for empty issueIds array', async () => {
+			const user = await createTestUser({
+				email: `bulk-empty-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk Empty User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk Empty Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: [], status: 'resolved' }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('missing_issue_ids');
+		});
+
+		it('should return 400 for invalid status', async () => {
+			const user = await createTestUser({
+				email: `bulk-invalid-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk Invalid User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk Invalid Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: ['some-id'], status: 'invalid' }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('invalid_status');
+		});
+
+		it('should return 400 when too many issue IDs are provided', async () => {
+			const user = await createTestUser({
+				email: `bulk-limit-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk Limit User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk Limit Project' });
+
+			const tooManyIds = Array.from({ length: 101 }, (_, i) => `fake-id-${i}`);
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: tooManyIds, status: 'resolved' }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('too_many_issues');
+		});
+
+		it('should return 400 when no action or status is provided', async () => {
+			const user = await createTestUser({
+				email: `bulk-noaction-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk No Action User',
+			});
+			const project = await createTestProject(user.token!, { name: 'Bulk No Action Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/issues/bulk`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: ['some-id'] }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+			const data = (await response.json()) as { error: string };
+			expect(data.error).toBe('no_action');
+		});
+
+		it('should reject unauthenticated requests', async () => {
+			const response = await SELF.fetch('http://localhost/api/projects/some-project/issues/bulk', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ issueIds: ['id1'], status: 'resolved' }),
+			});
+
+			expect(response.status).toBe(401);
+		});
+
+		it('should return 404 for non-existent project', async () => {
+			const user = await createTestUser({
+				email: `bulk-404-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Bulk 404 User',
+			});
+
+			const response = await authFetch(
+				user.token!,
+				'http://localhost/api/projects/non-existent-slug/issues/bulk',
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ issueIds: ['id1'], status: 'resolved' }),
+				},
+			);
+
+			expect(response.status).toBe(404);
+		});
+	});
+
 	describe('GET /api/projects/:slug/events/:eventId', () => {
 		it('should get a specific event by ID', async () => {
 			// Get issues first

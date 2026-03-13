@@ -43,10 +43,84 @@ const nextCursor = ref<string | undefined>();
 const dsn = ref<string>('');
 const tagFacets = ref<TagFacet[]>([]);
 const selectedTags = ref<string[]>([]);
+const selectedIds = ref<Set<string>>(new Set());
+const bulkLoading = ref(false);
+
+const allSelected = computed(
+	() => issues.value.length > 0 && issues.value.every((i) => selectedIds.value.has(i.id)),
+);
+const someSelected = computed(() => selectedIds.value.size > 0);
+
+function toggleSelect(id: string) {
+	const next = new Set(selectedIds.value);
+	if (next.has(id)) {
+		next.delete(id);
+	} else {
+		next.add(id);
+	}
+	selectedIds.value = next;
+}
+
+function toggleSelectAll() {
+	if (allSelected.value) {
+		selectedIds.value = new Set();
+	} else {
+		selectedIds.value = new Set(issues.value.map((i) => i.id));
+	}
+}
+
+function clearSelection() {
+	selectedIds.value = new Set();
+}
+
+async function bulkUpdateStatus(newStatus: string) {
+	if (selectedIds.value.size === 0) return;
+	bulkLoading.value = true;
+
+	try {
+		await api.patch(`/api/projects/${slug.value}/issues/bulk`, {
+			issueIds: Array.from(selectedIds.value),
+			status: newStatus,
+		});
+		for (const issue of issues.value) {
+			if (selectedIds.value.has(issue.id)) {
+				issue.status = newStatus;
+			}
+		}
+		if (statusFilter.value && statusFilter.value !== newStatus) {
+			issues.value = issues.value.filter((i) => !selectedIds.value.has(i.id));
+		}
+		clearSelection();
+	} catch (err) {
+		console.error('Bulk update failed:', err);
+	} finally {
+		bulkLoading.value = false;
+	}
+}
+
+async function bulkDelete() {
+	if (selectedIds.value.size === 0) return;
+	if (!confirm(`Delete ${selectedIds.value.size} issue(s)? This cannot be undone.`)) return;
+	bulkLoading.value = true;
+
+	try {
+		await api.patch(`/api/projects/${slug.value}/issues/bulk`, {
+			issueIds: Array.from(selectedIds.value),
+			action: 'delete',
+		});
+		issues.value = issues.value.filter((i) => !selectedIds.value.has(i.id));
+		clearSelection();
+	} catch (err) {
+		console.error('Bulk delete failed:', err);
+	} finally {
+		bulkLoading.value = false;
+	}
+}
 
 async function loadIssues(append = false) {
 	if (!append) {
 		loading.value = true;
+		clearSelection();
 	}
 	error.value = null;
 
@@ -191,6 +265,19 @@ watch(slug, () => loadIssues());
 					{{ tv.value }} ({{ tv.issueCount }})
 				</option>
 			</select>
+			<label
+				v-if="issues.length > 0"
+				class="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-300 cursor-pointer"
+			>
+				<input
+					type="checkbox"
+					:checked="allSelected"
+					:indeterminate="someSelected && !allSelected"
+					class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+					@change="toggleSelectAll"
+				/>
+				<span>Select all</span>
+			</label>
 		</div>
 
 		<!-- Active tag filters -->
@@ -208,6 +295,52 @@ watch(slug, () => loadIssues());
 					&times;
 				</button>
 			</span>
+		</div>
+
+		<!-- Bulk action bar -->
+		<div
+			v-if="someSelected"
+			class="mb-4 flex items-center justify-between bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg px-4 py-3"
+		>
+			<span class="text-sm font-medium text-primary-700 dark:text-primary-300">
+				{{ selectedIds.size }} issue{{ selectedIds.size !== 1 ? 's' : '' }} selected
+			</span>
+			<div class="flex items-center space-x-2">
+				<button
+					class="btn btn-secondary text-sm"
+					:disabled="bulkLoading"
+					@click="bulkUpdateStatus('resolved')"
+				>
+					Resolve
+				</button>
+				<button
+					class="btn btn-secondary text-sm"
+					:disabled="bulkLoading"
+					@click="bulkUpdateStatus('ignored')"
+				>
+					Ignore
+				</button>
+				<button
+					class="btn btn-secondary text-sm"
+					:disabled="bulkLoading"
+					@click="bulkUpdateStatus('unresolved')"
+				>
+					Reopen
+				</button>
+				<button
+					class="btn btn-danger text-sm"
+					:disabled="bulkLoading"
+					@click="bulkDelete"
+				>
+					Delete
+				</button>
+				<button
+					class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 ml-2"
+					@click="clearSelection"
+				>
+					Clear
+				</button>
+			</div>
 		</div>
 
 		<!-- Loading -->
@@ -306,68 +439,80 @@ Sentry.init({
 
 		<!-- Issues list -->
 		<div v-else class="card divide-y divide-gray-200 dark:divide-gray-700">
-			<RouterLink
+			<div
 				v-for="issue in issues"
 				:key="issue.id"
-				:to="`/projects/${slug}/issues/${issue.id}`"
-				class="block p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+				class="flex items-start p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
 			>
-				<div class="flex items-start justify-between">
-					<div class="flex-1 min-w-0">
-						<div class="flex items-center space-x-2">
-							<span :class="['badge', getLevelBadgeClass(issue.level)]">
-								{{ issue.level }}
-							</span>
-							<h3 class="text-sm font-medium text-gray-900 dark:text-white truncate">
-								{{ issue.metadata.type }}
-							</h3>
+				<div class="flex items-center pt-1 pr-3">
+					<input
+						type="checkbox"
+						:checked="selectedIds.has(issue.id)"
+						class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+						@change="toggleSelect(issue.id)"
+					/>
+				</div>
+				<RouterLink
+					:to="`/projects/${slug}/issues/${issue.id}`"
+					class="flex-1 min-w-0"
+				>
+					<div class="flex items-start justify-between">
+						<div class="flex-1 min-w-0">
+							<div class="flex items-center space-x-2">
+								<span :class="['badge', getLevelBadgeClass(issue.level)]">
+									{{ issue.level }}
+								</span>
+								<h3 class="text-sm font-medium text-gray-900 dark:text-white truncate">
+									{{ issue.metadata.type }}
+								</h3>
+							</div>
+							<p class="mt-1 text-sm text-gray-600 dark:text-gray-300 truncate">
+								{{ issue.metadata.value || issue.title }}
+							</p>
+							<p v-if="issue.culprit" class="mt-1 text-xs text-gray-400 truncate">
+								{{ issue.culprit }}
+							</p>
 						</div>
-						<p class="mt-1 text-sm text-gray-600 dark:text-gray-300 truncate">
-							{{ issue.metadata.value || issue.title }}
-						</p>
-						<p v-if="issue.culprit" class="mt-1 text-xs text-gray-400 truncate">
-							{{ issue.culprit }}
-						</p>
+
+						<div class="ml-4 flex flex-col items-end text-sm">
+							<div class="flex items-center space-x-4 text-gray-500">
+								<span title="Events">{{ issue.count.toLocaleString() }}</span>
+								<span v-if="issue.userCount > 0" title="Users">
+									{{ issue.userCount.toLocaleString() }} users
+								</span>
+							</div>
+							<p class="text-xs text-gray-400 mt-1">
+								{{ formatTimeAgo(issue.lastSeen) }}
+							</p>
+						</div>
 					</div>
 
-					<div class="ml-4 flex flex-col items-end text-sm">
-						<div class="flex items-center space-x-4 text-gray-500">
-							<span title="Events">{{ issue.count.toLocaleString() }}</span>
-							<span v-if="issue.userCount > 0" title="Users">
-								{{ issue.userCount.toLocaleString() }} users
-							</span>
-						</div>
-						<p class="text-xs text-gray-400 mt-1">
-							{{ formatTimeAgo(issue.lastSeen) }}
-						</p>
+					<!-- Quick actions -->
+					<div class="mt-3 flex items-center space-x-2" @click.prevent>
+						<button
+							v-if="issue.status !== 'resolved'"
+							class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+							@click="updateStatus(issue, 'resolved')"
+						>
+							Resolve
+						</button>
+						<button
+							v-if="issue.status !== 'ignored'"
+							class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+							@click="updateStatus(issue, 'ignored')"
+						>
+							Ignore
+						</button>
+						<button
+							v-if="issue.status !== 'unresolved'"
+							class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+							@click="updateStatus(issue, 'unresolved')"
+						>
+							Reopen
+						</button>
 					</div>
-				</div>
-
-				<!-- Quick actions -->
-				<div class="mt-3 flex items-center space-x-2" @click.prevent>
-					<button
-						v-if="issue.status !== 'resolved'"
-						class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-						@click="updateStatus(issue, 'resolved')"
-					>
-						Resolve
-					</button>
-					<button
-						v-if="issue.status !== 'ignored'"
-						class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-						@click="updateStatus(issue, 'ignored')"
-					>
-						Ignore
-					</button>
-					<button
-						v-if="issue.status !== 'unresolved'"
-						class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-						@click="updateStatus(issue, 'unresolved')"
-					>
-						Reopen
-					</button>
-				</div>
-			</RouterLink>
+				</RouterLink>
+			</div>
 		</div>
 
 		<!-- Load more -->
