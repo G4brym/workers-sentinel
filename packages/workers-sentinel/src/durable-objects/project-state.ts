@@ -386,16 +386,17 @@ export class ProjectState extends DurableObject<Env> {
 	]);
 
 	private async handleGetIssues(request: Request): Promise<Response> {
-		const { status, level, environment, query, sort, cursor, limit, tags } = (await request.json()) as {
-			status?: string;
-			level?: string;
-			environment?: string;
-			query?: string;
-			sort?: string;
-			cursor?: string;
-			limit?: number;
-			tags?: string[];
-		};
+		const { status, level, environment, query, sort, cursor, limit, tags } =
+			(await request.json()) as {
+				status?: string;
+				level?: string;
+				environment?: string;
+				query?: string;
+				sort?: string;
+				cursor?: string;
+				limit?: number;
+				tags?: string[];
+			};
 
 		const pageLimit = Math.min(limit || 25, 100);
 		const sortField = sort && ProjectState.ALLOWED_SORT_FIELDS.has(sort) ? sort : 'last_seen';
@@ -884,7 +885,9 @@ export class ProjectState extends DurableObject<Env> {
 
 	private handleGetConfig(): Response {
 		const maxEventsPerHour = this.getConfigValue('max_events_per_hour') || '0';
-		return this.jsonResponse({ config: { maxEventsPerHour: Number.parseInt(maxEventsPerHour, 10) } });
+		return this.jsonResponse({
+			config: { maxEventsPerHour: Number.parseInt(maxEventsPerHour, 10) },
+		});
 	}
 
 	private async handleUpdateConfig(request: Request): Promise<Response> {
