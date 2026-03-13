@@ -371,15 +371,15 @@ export class ProjectState extends DurableObject<Env> {
 		if (event.user) {
 			const userHash = await this.hashUserIdentifier(event.user);
 			if (userHash) {
-				const existingUser = this.sql
+				const existingUserRows = this.sql
 					.exec(
 						'SELECT issue_id FROM issue_users WHERE issue_id = ? AND user_hash = ?',
 						issueId,
 						userHash,
 					)
-					.one();
+					.toArray();
 
-				if (existingUser) {
+				if (existingUserRows.length > 0) {
 					this.sql.exec(
 						'UPDATE issue_users SET last_seen = ? WHERE issue_id = ? AND user_hash = ?',
 						now,

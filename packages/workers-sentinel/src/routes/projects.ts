@@ -152,6 +152,14 @@ projectRoutes.patch('/:slug', async (c) => {
 		retentionDays?: number;
 	}>();
 
+	if (
+		body.webhookUrl === undefined &&
+		body.maxEventsPerHour === undefined &&
+		body.retentionDays === undefined
+	) {
+		return c.json({ error: 'no_updates', message: 'No fields to update were provided' }, 400);
+	}
+
 	const authStateId = c.env.AUTH_STATE.idFromName('global');
 	const authState = c.env.AUTH_STATE.get(authStateId);
 

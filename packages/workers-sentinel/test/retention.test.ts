@@ -76,8 +76,8 @@ describe('Retention & Alarm Cleanup', () => {
 
 			// Trigger alarm — should be a no-op since retention is disabled
 			const stub = env.PROJECT_STATE.get(env.PROJECT_STATE.idFromName(project.id));
-			const _ran = await runDurableObjectAlarm(stub);
-			// Alarm may not be scheduled since retention is 0, so ran could be false
+			await runDurableObjectAlarm(stub);
+			// Alarm may not be scheduled since retention is 0
 			// Either way, events should still exist
 
 			// Verify events still exist
