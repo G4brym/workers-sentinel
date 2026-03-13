@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Lint, Typecheck & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec biome check packages/workers-sentinel
+
+      - name: Typecheck
+        run: pnpm --filter workers-sentinel typecheck
+
+      - name: Run tests
+        run: pnpm --filter workers-sentinel test
