@@ -59,6 +59,11 @@ const router = createRouter({
 					name: 'project-settings',
 					component: () => import('../views/ProjectSettings.vue'),
 				},
+				{
+					path: 'settings/tokens',
+					name: 'api-tokens',
+					component: () => import('../views/ApiTokens.vue'),
+				},
 			],
 		},
 	],

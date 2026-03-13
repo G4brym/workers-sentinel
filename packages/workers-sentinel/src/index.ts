@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { authMiddleware } from './middleware/auth';
-import { authRoutes } from './routes/auth';
+import { authRoutes, tokenRoutes } from './routes/auth';
 import { eventRoutes } from './routes/events';
 import { ingestionRoutes } from './routes/ingestion';
 import { issueRoutes } from './routes/issues';
@@ -37,6 +37,11 @@ app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISO
 
 // Public routes (no auth required)
 app.route('/api/auth', authRoutes);
+
+// API token management routes (session auth required)
+app.use('/api/auth/tokens/*', authMiddleware);
+app.use('/api/auth/tokens', authMiddleware);
+app.route('/api/auth/tokens', tokenRoutes);
 
 // Ingestion routes (DSN auth, not session auth)
 app.route('/api', ingestionRoutes);

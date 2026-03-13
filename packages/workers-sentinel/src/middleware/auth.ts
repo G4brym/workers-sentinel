@@ -24,17 +24,33 @@ export const authMiddleware = createMiddleware<{
 	const authStateId = c.env.AUTH_STATE.idFromName('global');
 	const authState = c.env.AUTH_STATE.get(authStateId);
 
-	// Validate session
-	const response = await authState.fetch(
-		new Request('http://internal/validate-session', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ token }),
-		}),
-	);
+	// Choose validation endpoint based on token prefix
+	let response: Response;
+	if (token.startsWith('wst_')) {
+		// API token auth
+		response = await authState.fetch(
+			new Request('http://internal/validate-api-token', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token }),
+			}),
+		);
+	} else {
+		// Session token auth (existing behavior)
+		response = await authState.fetch(
+			new Request('http://internal/validate-session', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token }),
+			}),
+		);
+	}
 
 	if (!response.ok) {
-		return c.json({ error: 'unauthorized', message: 'Invalid or expired session' }, 401);
+		const message = token.startsWith('wst_')
+			? 'Invalid or expired API token'
+			: 'Invalid or expired session';
+		return c.json({ error: 'unauthorized', message }, 401);
 	}
 
 	const auth = (await response.json()) as AuthContext;
