@@ -104,6 +104,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **⚡ Rate Limiting**: Configurable per-project event quotas to prevent runaway error loops from overwhelming the system
 - **🗑️ Data Retention**: Configurable per-project retention policies with automatic cleanup
 - **🗺️ Source Maps**: Upload source maps per release to resolve minified stack traces back to original source locations
+- **🚫 Inbound Filters**: Drop noisy events before storage with server-side filters (message, exception type, IP address, release, environment)
 
 ## Prerequisites
 

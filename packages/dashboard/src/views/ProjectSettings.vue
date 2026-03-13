@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { ApiError, api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { useProjectsStore } from '../stores/projects';
@@ -720,6 +720,17 @@ onMounted(() => {
 					</div>
 				</div>
 				<p v-else class="text-sm text-gray-400">No source maps uploaded yet.</p>
+			</div>
+
+			<!-- Inbound Filters -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Inbound Filters</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Configure rules to automatically drop noisy or unwanted events before they are stored.
+				</p>
+				<RouterLink :to="`/projects/${slug}/filters`" class="btn btn-secondary">
+					Manage Filters
+				</RouterLink>
 			</div>
 
 			<!-- Danger zone -->

@@ -241,6 +241,19 @@ export interface PaginatedResponse<T> {
 	hasMore: boolean;
 }
 
+// Inbound filter types
+export type FilterType = 'message' | 'error_type' | 'ip_address' | 'release' | 'environment';
+
+export interface InboundFilter {
+	id: string;
+	filterType: FilterType;
+	pattern: string;
+	enabled: boolean;
+	description: string | null;
+	droppedCount: number;
+	createdAt: string;
+}
+
 // Hono context types
 export interface AuthContext {
 	user: User;
