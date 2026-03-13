@@ -273,6 +273,45 @@ issueRoutes.delete('/:slug/issues/:issueId', async (c) => {
 	return c.json(data);
 });
 
+// Merge issues
+// POST /api/projects/:slug/issues/merge
+issueRoutes.post('/:slug/issues/merge', async (c) => {
+	const slug = c.req.param('slug');
+
+	const projectResult = await getProjectWithAccess(c, slug);
+	if (projectResult instanceof Response) {
+		return projectResult;
+	}
+
+	const { project } = projectResult;
+	const body = await c.req.json<{ primaryIssueId: string; issueIds: string[] }>();
+
+	if (!body.primaryIssueId || !Array.isArray(body.issueIds) || body.issueIds.length < 2) {
+		return c.json({ error: 'Must provide primaryIssueId and at least 2 issueIds' }, 400);
+	}
+
+	if (!body.issueIds.includes(body.primaryIssueId)) {
+		return c.json({ error: 'primaryIssueId must be included in issueIds' }, 400);
+	}
+
+	const projectStateId = c.env.PROJECT_STATE.idFromName(project.id);
+	const projectState = c.env.PROJECT_STATE.get(projectStateId);
+
+	const response = await projectState.fetch(
+		new Request('http://internal/issues/merge', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				primaryIssueId: body.primaryIssueId,
+				issueIds: body.issueIds,
+			}),
+		}),
+	);
+
+	const data = await response.json();
+	return c.json(data, response.status as 200 | 400 | 404);
+});
+
 // Snooze an issue
 // POST /api/projects/:slug/issues/:issueId/snooze
 issueRoutes.post('/:slug/issues/:issueId/snooze', async (c) => {
