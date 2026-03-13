@@ -48,6 +48,7 @@ const tagFacets = ref<TagFacet[]>([]);
 const selectedTags = ref<string[]>([]);
 const selectedIds = ref<Set<string>>(new Set());
 const bulkLoading = ref(false);
+const merging = ref(false);
 
 const allSelected = computed(
 	() => issues.value.length > 0 && issues.value.every((i) => selectedIds.value.has(i.id)),
@@ -117,6 +118,35 @@ async function bulkDelete() {
 		console.error('Bulk delete failed:', err);
 	} finally {
 		bulkLoading.value = false;
+	}
+}
+
+async function mergeSelected() {
+	if (selectedIds.value.size < 2) return;
+	if (
+		!confirm(
+			`Merge ${selectedIds.value.size} issues? Events from ${selectedIds.value.size - 1} issue(s) will be moved into the primary issue (first selected). This cannot be undone.`,
+		)
+	)
+		return;
+
+	// Use the first issue in the current list order that is selected as primary
+	const primaryIssue = issues.value.find((i) => selectedIds.value.has(i.id));
+	if (!primaryIssue) return;
+
+	merging.value = true;
+	try {
+		await api.post(`/api/projects/${slug.value}/issues/merge`, {
+			primaryIssueId: primaryIssue.id,
+			issueIds: Array.from(selectedIds.value),
+		});
+		clearSelection();
+		await loadIssues();
+	} catch (err) {
+		console.error('Failed to merge issues:', err);
+		alert('Failed to merge issues. Please try again.');
+	} finally {
+		merging.value = false;
 	}
 }
 
@@ -359,6 +389,14 @@ watch(slug, () => loadIssues());
 					@click="bulkDelete"
 				>
 					Delete
+				</button>
+				<button
+					v-if="selectedIds.size >= 2"
+					class="btn btn-secondary text-sm"
+					:disabled="merging || bulkLoading"
+					@click="mergeSelected"
+				>
+					{{ merging ? 'Merging...' : 'Merge' }}
 				</button>
 				<button
 					class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 ml-2"

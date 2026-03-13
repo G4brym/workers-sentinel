@@ -167,11 +167,24 @@ CREATE TABLE IF NOT EXISTS inbound_filters (
   dropped_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS fingerprint_redirects (
+  fingerprint TEXT PRIMARY KEY,
+  target_issue_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (target_issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
 `;
 
-const MIGRATIONS = `
-ALTER TABLE issues ADD COLUMN snoozed_until TEXT;
-`;
+const MIGRATIONS = [
+	'ALTER TABLE issues ADD COLUMN snoozed_until TEXT;',
+	`CREATE TABLE IF NOT EXISTS fingerprint_redirects (
+  fingerprint TEXT PRIMARY KEY,
+  target_issue_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (target_issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);`,
+];
 
 export class ProjectState extends DurableObject<Env> {
 	private sql: SqlStorage;
@@ -187,10 +200,12 @@ export class ProjectState extends DurableObject<Env> {
 	private async ensureSchema(): Promise<void> {
 		if (this.initialized) return;
 		this.sql.exec(SCHEMA);
-		try {
-			this.sql.exec(MIGRATIONS);
-		} catch {
-			// Column already exists — migration already applied
+		for (const migration of MIGRATIONS) {
+			try {
+				this.sql.exec(migration);
+			} catch {
+				// Migration already applied — safe to ignore
+			}
 		}
 		this.sql.exec('CREATE INDEX IF NOT EXISTS idx_issues_snoozed_until ON issues(snoozed_until)');
 		this.warmRateLimitCounter();
@@ -281,6 +296,8 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleUpdateFilter(request);
 				case '/filters/delete':
 					return this.handleDeleteFilter(request);
+				case '/issues/merge':
+					return this.handleMergeIssues(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -337,9 +354,24 @@ export class ProjectState extends DurableObject<Env> {
 			);
 			return this.jsonResponse({ filtered: true, eventId });
 		}
+		// Check if this fingerprint has been redirected (from a merged issue)
+		let effectiveFingerprint = fingerprint;
+		const redirectRows = this.sql
+			.exec('SELECT target_issue_id FROM fingerprint_redirects WHERE fingerprint = ?', fingerprint)
+			.toArray();
+		if (redirectRows.length > 0) {
+			const targetIssueId = redirectRows[0].target_issue_id as string;
+			const targetIssueRows = this.sql
+				.exec('SELECT fingerprint FROM issues WHERE id = ?', targetIssueId)
+				.toArray();
+			if (targetIssueRows.length > 0) {
+				effectiveFingerprint = targetIssueRows[0].fingerprint as string;
+			}
+		}
+
 		// Check for existing issue
 		const existingRows = this.sql
-			.exec('SELECT id, count, status FROM issues WHERE fingerprint = ?', fingerprint)
+			.exec('SELECT id, count, status FROM issues WHERE fingerprint = ?', effectiveFingerprint)
 			.toArray();
 		const existingIssue = existingRows.length > 0 ? existingRows[0] : null;
 
@@ -1884,6 +1916,170 @@ export class ProjectState extends DurableObject<Env> {
 
 		this.sql.exec('DELETE FROM source_maps WHERE id = ?', id);
 		return this.jsonResponse({ success: true });
+	}
+
+	private async handleMergeIssues(request: Request): Promise<Response> {
+		const { primaryIssueId, issueIds } = (await request.json()) as {
+			primaryIssueId: string;
+			issueIds: string[];
+		};
+
+		// Validate primary issue exists
+		const primaryRows = this.sql
+			.exec('SELECT id FROM issues WHERE id = ?', primaryIssueId)
+			.toArray();
+		if (primaryRows.length === 0) {
+			return this.jsonResponse({ error: 'primary_issue_not_found' }, 404);
+		}
+
+		// Filter out primary from merge list
+		const secondaryIds = issueIds.filter((id) => id !== primaryIssueId);
+		if (secondaryIds.length === 0) {
+			return this.jsonResponse({ error: 'no_issues_to_merge' }, 400);
+		}
+
+		// Validate all secondary issues exist
+		const placeholders = secondaryIds.map(() => '?').join(',');
+		const secondaryRows = this.sql
+			.exec(`SELECT id, fingerprint FROM issues WHERE id IN (${placeholders})`, ...secondaryIds)
+			.toArray();
+
+		if (secondaryRows.length !== secondaryIds.length) {
+			return this.jsonResponse({ error: 'some_issues_not_found' }, 404);
+		}
+
+		// Move events from secondary issues to primary
+		this.sql.exec(
+			`UPDATE events SET issue_id = ? WHERE issue_id IN (${placeholders})`,
+			primaryIssueId,
+			...secondaryIds,
+		);
+
+		// Update event_tags to point to primary issue
+		this.sql.exec(
+			`UPDATE event_tags SET issue_id = ? WHERE issue_id IN (${placeholders})`,
+			primaryIssueId,
+			...secondaryIds,
+		);
+
+		// Merge issue_stats: add counts to primary, handling bucket conflicts
+		for (const secondaryId of secondaryIds) {
+			const statsRows = this.sql
+				.exec('SELECT bucket, count FROM issue_stats WHERE issue_id = ?', secondaryId)
+				.toArray();
+			for (const stat of statsRows) {
+				this.sql.exec(
+					`INSERT INTO issue_stats (issue_id, bucket, count)
+					 VALUES (?, ?, ?)
+					 ON CONFLICT (issue_id, bucket) DO UPDATE SET count = count + excluded.count`,
+					primaryIssueId,
+					stat.bucket,
+					stat.count,
+				);
+			}
+		}
+
+		// Merge issue_users: union of unique users with MIN/MAX first/last seen
+		for (const secondaryId of secondaryIds) {
+			const userRows = this.sql
+				.exec(
+					'SELECT user_hash, first_seen, last_seen FROM issue_users WHERE issue_id = ?',
+					secondaryId,
+				)
+				.toArray();
+			for (const user of userRows) {
+				this.sql.exec(
+					`INSERT INTO issue_users (issue_id, user_hash, first_seen, last_seen)
+					 VALUES (?, ?, ?, ?)
+					 ON CONFLICT (issue_id, user_hash) DO UPDATE SET
+					   first_seen = MIN(first_seen, excluded.first_seen),
+					   last_seen = MAX(last_seen, excluded.last_seen)`,
+					primaryIssueId,
+					user.user_hash,
+					user.first_seen,
+					user.last_seen,
+				);
+			}
+		}
+
+		// Merge issue_environments: union with additive event counts
+		for (const secondaryId of secondaryIds) {
+			const envRows = this.sql
+				.exec(
+					'SELECT environment, first_seen, last_seen, event_count FROM issue_environments WHERE issue_id = ?',
+					secondaryId,
+				)
+				.toArray();
+			for (const env of envRows) {
+				this.sql.exec(
+					`INSERT INTO issue_environments (issue_id, environment, first_seen, last_seen, event_count)
+					 VALUES (?, ?, ?, ?, ?)
+					 ON CONFLICT (issue_id, environment) DO UPDATE SET
+					   first_seen = MIN(first_seen, excluded.first_seen),
+					   last_seen = MAX(last_seen, excluded.last_seen),
+					   event_count = event_count + excluded.event_count`,
+					primaryIssueId,
+					env.environment,
+					env.first_seen,
+					env.last_seen,
+					env.event_count,
+				);
+			}
+		}
+
+		const now = new Date().toISOString();
+
+		// Update any existing fingerprint_redirects that point to secondary issues to point to primary
+		// This handles redirect chains (A→B, then B merged into C → A should redirect to C)
+		this.sql.exec(
+			`UPDATE fingerprint_redirects SET target_issue_id = ? WHERE target_issue_id IN (${placeholders})`,
+			primaryIssueId,
+			...secondaryIds,
+		);
+
+		// Create fingerprint redirects for all secondary issue fingerprints
+		for (const row of secondaryRows) {
+			this.sql.exec(
+				`INSERT OR REPLACE INTO fingerprint_redirects (fingerprint, target_issue_id, created_at)
+				 VALUES (?, ?, ?)`,
+				row.fingerprint,
+				primaryIssueId,
+				now,
+			);
+		}
+
+		// Delete secondary issues (CASCADE removes their stats, users, environments)
+		this.sql.exec(`DELETE FROM issues WHERE id IN (${placeholders})`, ...secondaryIds);
+
+		// Recalculate primary issue aggregates from actual data
+		const eventCount = this.sql
+			.exec('SELECT COUNT(*) as cnt FROM events WHERE issue_id = ?', primaryIssueId)
+			.one();
+		const userCount = this.sql
+			.exec('SELECT COUNT(*) as cnt FROM issue_users WHERE issue_id = ?', primaryIssueId)
+			.one();
+		const firstEvent = this.sql
+			.exec('SELECT MIN(timestamp) as ts FROM events WHERE issue_id = ?', primaryIssueId)
+			.one();
+		const lastEvent = this.sql
+			.exec('SELECT MAX(timestamp) as ts FROM events WHERE issue_id = ?', primaryIssueId)
+			.one();
+
+		this.sql.exec(
+			`UPDATE issues SET count = ?, user_count = ?, first_seen = COALESCE(?, first_seen), last_seen = COALESCE(?, last_seen) WHERE id = ?`,
+			eventCount?.cnt ?? 0,
+			userCount?.cnt ?? 0,
+			firstEvent?.ts,
+			lastEvent?.ts,
+			primaryIssueId,
+		);
+
+		const updatedIssue = this.sql.exec('SELECT * FROM issues WHERE id = ?', primaryIssueId).one();
+
+		return this.jsonResponse({
+			issue: updatedIssue ? this.rowToIssue(updatedIssue) : null,
+			mergedCount: secondaryIds.length,
+		});
 	}
 
 	private jsonResponse(data: unknown, status = 200): Response {

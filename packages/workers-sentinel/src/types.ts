@@ -254,6 +254,16 @@ export interface InboundFilter {
 	createdAt: string;
 }
 
+export interface MergeIssuesRequest {
+	primaryIssueId: string;
+	issueIds: string[];
+}
+
+export interface MergeIssuesResponse {
+	issue: Issue | null;
+	mergedCount: number;
+}
+
 // Hono context types
 export interface AuthContext {
 	user: User;
