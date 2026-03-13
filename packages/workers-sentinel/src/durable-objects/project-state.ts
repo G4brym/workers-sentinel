@@ -5,7 +5,9 @@ import {
 	extractTitle,
 	generateFingerprint,
 } from '../lib/fingerprint';
-import type { Env, Issue, SentryEvent } from '../types';
+import type { Env, Issue, ProjectSettings, SentryEvent } from '../types';
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS issues (
@@ -64,11 +66,40 @@ CREATE TABLE IF NOT EXISTS issue_users (
   PRIMARY KEY (issue_id, user_hash),
   FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS project_config (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rate_limit_counters (
+  bucket TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS event_tags (
+  event_id TEXT NOT NULL,
+  issue_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (event_id, key),
+  FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+  FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_event_tags_key_value ON event_tags(key, value);
+CREATE INDEX IF NOT EXISTS idx_event_tags_issue ON event_tags(issue_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 export class ProjectState extends DurableObject<Env> {
 	private sql: SqlStorage;
 	private initialized = false;
+	private rateLimitCount = 0;
+	private rateLimitBucket = '';
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -78,7 +109,17 @@ export class ProjectState extends DurableObject<Env> {
 	private async ensureSchema(): Promise<void> {
 		if (this.initialized) return;
 		this.sql.exec(SCHEMA);
+		this.warmRateLimitCounter();
 		this.initialized = true;
+
+		// Schedule cleanup alarm if retention is enabled and no alarm exists
+		const alarm = await this.ctx.storage.getAlarm();
+		if (!alarm) {
+			const retentionDays = this.getRetentionDays();
+			if (retentionDays > 0) {
+				await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+			}
+		}
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -107,6 +148,20 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleGetLatestEvents(request);
 				case '/stats':
 					return this.handleGetStats(request);
+				case '/config':
+					return this.handleGetConfig();
+				case '/config/update':
+					return this.handleUpdateConfig(request);
+				case '/rate-limit-status':
+					return this.handleRateLimitStatus();
+				case '/tags':
+					return this.handleGetTags(request);
+				case '/tag-values':
+					return this.handleGetTagValues(request);
+				case '/settings':
+					return this.handleGetSettings();
+				case '/settings/update':
+					return this.handleUpdateSettings(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -126,6 +181,21 @@ export class ProjectState extends DurableObject<Env> {
 	}
 
 	private async handleIngest(request: Request): Promise<Response> {
+		// Check rate limit before processing
+		const rateCheck = this.checkRateLimit();
+		if (!rateCheck.allowed) {
+			return new Response(
+				JSON.stringify({ error: 'rate_limited', message: 'Project event quota exceeded' }),
+				{
+					status: 429,
+					headers: {
+						'Content-Type': 'application/json',
+						'Retry-After': String(rateCheck.retryAfter || 3600),
+					},
+				},
+			);
+		}
+
 		const event = (await request.json()) as SentryEvent;
 
 		const eventId = event.event_id || crypto.randomUUID();
@@ -197,6 +267,26 @@ export class ProjectState extends DurableObject<Env> {
 			JSON.stringify(event),
 		);
 
+		// Store indexed tags
+		if (event.tags && typeof event.tags === 'object') {
+			for (const [key, value] of Object.entries(event.tags)) {
+				if (
+					typeof key === 'string' &&
+					typeof value === 'string' &&
+					key.length <= 200 &&
+					value.length <= 200
+				) {
+					this.sql.exec(
+						'INSERT OR IGNORE INTO event_tags (event_id, issue_id, key, value) VALUES (?, ?, ?, ?)',
+						eventId,
+						issueId,
+						key,
+						value,
+					);
+				}
+			}
+		}
+
 		// Update hourly stats
 		const bucket = this.getHourBucket(timestamp);
 		this.sql.exec(
@@ -205,6 +295,14 @@ export class ProjectState extends DurableObject<Env> {
        ON CONFLICT (issue_id, bucket) DO UPDATE SET count = count + 1`,
 			issueId,
 			bucket,
+		);
+
+		// Update rate limit counter
+		this.rateLimitCount++;
+		const currentBucket = this.getHourBucket(new Date().toISOString());
+		this.sql.exec(
+			'INSERT INTO rate_limit_counters (bucket, count) VALUES (?, 1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1',
+			currentBucket,
 		);
 
 		// Track unique users
@@ -260,13 +358,14 @@ export class ProjectState extends DurableObject<Env> {
 	]);
 
 	private async handleGetIssues(request: Request): Promise<Response> {
-		const { status, level, query, sort, cursor, limit } = (await request.json()) as {
+		const { status, level, query, sort, cursor, limit, tags } = (await request.json()) as {
 			status?: string;
 			level?: string;
 			query?: string;
 			sort?: string;
 			cursor?: string;
 			limit?: number;
+			tags?: string[];
 		};
 
 		const pageLimit = Math.min(limit || 25, 100);
@@ -289,6 +388,18 @@ export class ProjectState extends DurableObject<Env> {
 		if (query) {
 			sql += ' AND (title LIKE ? OR culprit LIKE ?)';
 			params.push(`%${query}%`, `%${query}%`);
+		}
+
+		if (tags && tags.length > 0) {
+			for (let i = 0; i < Math.min(tags.length, 5); i++) {
+				const [tagKey, ...rest] = tags[i].split(':');
+				const tagValue = rest.join(':');
+				if (tagKey && tagValue) {
+					sql +=
+						' AND id IN (SELECT DISTINCT issue_id FROM event_tags WHERE key = ? AND value = ?)';
+					params.push(tagKey, tagValue);
+				}
+			}
 		}
 
 		if (cursor) {
@@ -494,6 +605,86 @@ export class ProjectState extends DurableObject<Env> {
 		return this.jsonResponse({ total, series });
 	}
 
+	private async handleGetTags(request: Request): Promise<Response> {
+		const { limit } = (await request.json()) as { limit?: number };
+		const facetLimit = Math.min(limit || 10, 50);
+
+		const keys = this.sql
+			.exec(
+				`SELECT key, COUNT(DISTINCT issue_id) as issue_count, COUNT(*) as event_count
+				 FROM event_tags
+				 GROUP BY key
+				 ORDER BY issue_count DESC
+				 LIMIT ?`,
+				facetLimit,
+			)
+			.toArray();
+
+		const facets = keys.map((row) => {
+			const topValues = this.sql
+				.exec(
+					`SELECT value, COUNT(DISTINCT issue_id) as issue_count, COUNT(*) as event_count
+					 FROM event_tags
+					 WHERE key = ?
+					 GROUP BY value
+					 ORDER BY issue_count DESC
+					 LIMIT 10`,
+					row.key as string,
+				)
+				.toArray();
+
+			return {
+				key: row.key as string,
+				issueCount: row.issue_count as number,
+				eventCount: row.event_count as number,
+				topValues: topValues.map((v) => ({
+					value: v.value as string,
+					issueCount: v.issue_count as number,
+					eventCount: v.event_count as number,
+				})),
+			};
+		});
+
+		return this.jsonResponse({ facets });
+	}
+
+	private async handleGetTagValues(request: Request): Promise<Response> {
+		const { key, query, limit } = (await request.json()) as {
+			key: string;
+			query?: string;
+			limit?: number;
+		};
+
+		if (!key) {
+			return this.jsonResponse({ error: 'missing_key' }, 400);
+		}
+
+		const pageLimit = Math.min(limit || 25, 100);
+
+		let sql = `SELECT value, COUNT(DISTINCT issue_id) as issue_count, COUNT(*) as event_count
+			FROM event_tags
+			WHERE key = ?`;
+		const params: (string | number)[] = [key];
+
+		if (query) {
+			sql += " AND value LIKE ? ESCAPE '\\'";
+			const escaped = query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+			params.push(`%${escaped}%`);
+		}
+
+		sql += ' GROUP BY value ORDER BY issue_count DESC LIMIT ?';
+		params.push(pageLimit);
+
+		const rows = this.sql.exec(sql, ...params).toArray();
+		const values = rows.map((row) => ({
+			value: row.value as string,
+			issueCount: row.issue_count as number,
+			eventCount: row.event_count as number,
+		}));
+
+		return this.jsonResponse({ key, values });
+	}
+
 	private getHourBucket(timestamp: string): string {
 		const date = new Date(timestamp);
 		date.setMinutes(0, 0, 0);
@@ -531,6 +722,183 @@ export class ProjectState extends DurableObject<Env> {
 			status: row.status as Issue['status'],
 			metadata: JSON.parse((row.metadata as string) || '{}'),
 		};
+	}
+
+	private warmRateLimitCounter(): void {
+		const bucket = this.getHourBucket(new Date().toISOString());
+		this.rateLimitBucket = bucket;
+		// Check persisted counter first
+		const row = this.sql
+			.exec('SELECT count FROM rate_limit_counters WHERE bucket = ?', bucket)
+			.toArray();
+		if (row.length > 0) {
+			this.rateLimitCount = row[0].count as number;
+		} else {
+			// Fallback: sum from issue_stats for this hour
+			const statsRow = this.sql
+				.exec('SELECT COALESCE(SUM(count), 0) as total FROM issue_stats WHERE bucket = ?', bucket)
+				.one();
+			this.rateLimitCount = (statsRow?.total as number) || 0;
+		}
+	}
+
+	private checkRateLimit(): { allowed: boolean; retryAfter?: number } {
+		const maxPerHour = this.getConfigValue('max_events_per_hour');
+		if (!maxPerHour || maxPerHour === '0') {
+			return { allowed: true };
+		}
+		const limit = Number.parseInt(maxPerHour, 10);
+		if (limit <= 0) return { allowed: true };
+
+		const currentBucket = this.getHourBucket(new Date().toISOString());
+		if (currentBucket !== this.rateLimitBucket) {
+			// New hour — reset counter and clean old buckets
+			this.rateLimitBucket = currentBucket;
+			this.rateLimitCount = 0;
+			this.sql.exec('DELETE FROM rate_limit_counters WHERE bucket < ?', currentBucket);
+		}
+
+		if (this.rateLimitCount >= limit) {
+			// Calculate seconds until next hour
+			const now = new Date();
+			const nextHour = new Date(now);
+			nextHour.setMinutes(0, 0, 0);
+			nextHour.setHours(nextHour.getHours() + 1);
+			const retryAfter = Math.ceil((nextHour.getTime() - now.getTime()) / 1000);
+			return { allowed: false, retryAfter };
+		}
+		return { allowed: true };
+	}
+
+	private getConfigValue(key: string): string | null {
+		const rows = this.sql.exec('SELECT value FROM project_config WHERE key = ?', key).toArray();
+		return rows.length > 0 ? (rows[0].value as string) : null;
+	}
+
+	private setConfigValue(key: string, value: string): void {
+		this.sql.exec(
+			'INSERT INTO project_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?',
+			key,
+			value,
+			value,
+		);
+	}
+
+	private handleGetConfig(): Response {
+		const maxEventsPerHour = this.getConfigValue('max_events_per_hour') || '0';
+		return this.jsonResponse({ config: { maxEventsPerHour: Number.parseInt(maxEventsPerHour, 10) } });
+	}
+
+	private async handleUpdateConfig(request: Request): Promise<Response> {
+		const { maxEventsPerHour } = (await request.json()) as { maxEventsPerHour?: number };
+		if (maxEventsPerHour !== undefined) {
+			if (typeof maxEventsPerHour !== 'number' || maxEventsPerHour < 0) {
+				return this.jsonResponse(
+					{ error: 'invalid_value', message: 'maxEventsPerHour must be a non-negative number' },
+					400,
+				);
+			}
+			this.setConfigValue('max_events_per_hour', String(Math.floor(maxEventsPerHour)));
+		}
+		return this.handleGetConfig();
+	}
+
+	private handleRateLimitStatus(): Response {
+		const maxPerHour = Number.parseInt(this.getConfigValue('max_events_per_hour') || '0', 10);
+		const currentBucket = this.getHourBucket(new Date().toISOString());
+		let currentCount = this.rateLimitCount;
+		if (currentBucket !== this.rateLimitBucket) {
+			currentCount = 0;
+		}
+		return this.jsonResponse({
+			maxEventsPerHour: maxPerHour,
+			currentHourCount: currentCount,
+			currentBucket,
+			isLimited: maxPerHour > 0 && currentCount >= maxPerHour,
+		});
+	}
+
+	async alarm(): Promise<void> {
+		await this.ensureSchema();
+
+		const retentionDays = this.getRetentionDays();
+		if (retentionDays <= 0) return;
+
+		const cutoffDate = new Date(
+			Date.now() - retentionDays * MS_PER_DAY,
+		).toISOString();
+
+		// Delete old events
+		this.sql.exec('DELETE FROM events WHERE received_at < ?', cutoffDate);
+
+		// Delete old issue_stats buckets
+		this.sql.exec('DELETE FROM issue_stats WHERE bucket < ?', cutoffDate);
+
+		// Clean up issue_users whose last activity is before the cutoff
+		this.sql.exec('DELETE FROM issue_users WHERE last_seen < ?', cutoffDate);
+
+		// Recalculate issue counts from remaining events
+		this.sql.exec(`
+			UPDATE issues SET count = (
+				SELECT COUNT(*) FROM events WHERE events.issue_id = issues.id
+			)
+		`);
+
+		// Recalculate user counts from remaining issue_users
+		this.sql.exec(`
+			UPDATE issues SET user_count = (
+				SELECT COUNT(*) FROM issue_users WHERE issue_users.issue_id = issues.id
+			)
+		`);
+
+		// Delete issues with no remaining events
+		this.sql.exec('DELETE FROM issues WHERE count = 0');
+
+		// Clean up orphaned issue_users for deleted issues
+		this.sql.exec(
+			'DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)',
+		);
+
+		// Reschedule alarm for tomorrow
+		await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+	}
+
+	private getRetentionDays(): number {
+		const rows = this.sql
+			.exec("SELECT value FROM settings WHERE key = 'retention_days'")
+			.toArray();
+		return rows.length > 0 ? Number.parseInt(rows[0].value as string, 10) : 0;
+	}
+
+	private handleGetSettings(): Response {
+		const retentionDays = this.getRetentionDays();
+		return this.jsonResponse({ retentionDays });
+	}
+
+	private async handleUpdateSettings(request: Request): Promise<Response> {
+		const { retentionDays } = (await request.json()) as ProjectSettings;
+
+		if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
+			return this.jsonResponse(
+				{ error: 'invalid_retention_days', message: 'retentionDays must be 0 or a positive integer' },
+				400,
+			);
+		}
+
+		this.sql.exec(
+			"INSERT OR REPLACE INTO settings (key, value) VALUES ('retention_days', ?)",
+			String(retentionDays),
+		);
+
+		if (retentionDays > 0) {
+			// Schedule alarm for cleanup (24 hours from now)
+			await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+		} else {
+			// Disable retention — cancel any pending alarm
+			await this.ctx.storage.deleteAlarm();
+		}
+
+		return this.jsonResponse({ retentionDays });
 	}
 
 	private jsonResponse(data: unknown, status = 200): Response {

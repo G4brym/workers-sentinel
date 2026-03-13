@@ -30,6 +30,13 @@ const savingWebhook = ref(false);
 const webhookSaved = ref(false);
 const testingWebhook = ref(false);
 const webhookTested = ref(false);
+const maxEventsPerHour = ref<number>(0);
+const rateLimitStatus = ref<{ currentHourCount: number; isLimited: boolean } | null>(null);
+const savingConfig = ref(false);
+const configSaved = ref(false);
+const retentionDays = ref<number>(0);
+const savingRetention = ref(false);
+const retentionSaved = ref(false);
 
 async function loadProject() {
 	loading.value = true;
@@ -42,6 +49,11 @@ async function loadProject() {
 		project.value = response.project;
 		dsn.value = response.dsn;
 		webhookUrl.value = response.project.webhookUrl || '';
+
+		const settingsResponse = await api.get<{ retentionDays: number }>(
+			`/api/projects/${slug.value}/settings`,
+		);
+		retentionDays.value = settingsResponse.retentionDays;
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load project';
 	} finally {
@@ -99,6 +111,56 @@ async function testWebhook() {
 	}
 }
 
+async function loadRateLimitStatus() {
+	try {
+		const response = await api.get<{
+			maxEventsPerHour: number;
+			currentHourCount: number;
+			isLimited: boolean;
+		}>(`/api/projects/${slug.value}/rate-limit`);
+		maxEventsPerHour.value = response.maxEventsPerHour;
+		rateLimitStatus.value = response;
+	} catch {
+		/* ignore */
+	}
+}
+
+async function saveRateLimit() {
+	savingConfig.value = true;
+	configSaved.value = false;
+	try {
+		await api.patch(`/api/projects/${slug.value}`, {
+			maxEventsPerHour: maxEventsPerHour.value,
+		});
+		configSaved.value = true;
+		await loadRateLimitStatus();
+		setTimeout(() => {
+			configSaved.value = false;
+		}, 3000);
+	} catch (err) {
+		error.value = err instanceof Error ? err.message : 'Failed to save';
+	} finally {
+		savingConfig.value = false;
+	}
+}
+
+async function saveRetention() {
+	savingRetention.value = true;
+	retentionSaved.value = false;
+	try {
+		await api.patch(`/api/projects/${slug.value}`, {
+			retentionDays: retentionDays.value,
+		});
+		retentionSaved.value = true;
+		setTimeout(() => {
+			retentionSaved.value = false;
+		}, 3000);
+	} catch (err) {
+		error.value = err instanceof Error ? err.message : 'Failed to save settings';
+	} finally {
+		savingRetention.value = false;	}
+}
+
 function copyDsn() {
 	navigator.clipboard.writeText(dsn.value);
 }
@@ -113,7 +175,10 @@ function formatDate(dateString: string): string {
 	});
 }
 
-onMounted(() => loadProject());
+onMounted(() => {
+	loadProject();
+	loadRateLimitStatus();
+});
 </script>
 
 <template>
@@ -223,6 +288,81 @@ onMounted(() => loadProject());
 							<span v-else>Send Test</span>
 						</button>
 					</div>
+				</div>
+			</div>
+
+			<!-- Rate Limiting -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Rate Limiting</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Limit the number of events this project can receive per hour. Set to 0 for unlimited.
+				</p>
+
+				<div class="space-y-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+							Max events per hour
+						</label>
+						<div class="flex items-center space-x-3">
+							<input
+								v-model.number="maxEventsPerHour"
+								type="number"
+								min="0"
+								step="100"
+								class="w-48 px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+								placeholder="0 (unlimited)"
+							/>
+							<button
+								class="btn btn-primary"
+								:disabled="savingConfig"
+								@click="saveRateLimit"
+							>
+								<span v-if="savingConfig">Saving...</span>
+								<span v-else-if="configSaved">Saved!</span>
+								<span v-else>Save</span>
+							</button>
+						</div>
+					</div>
+
+					<!-- Current usage display -->
+					<div v-if="rateLimitStatus && maxEventsPerHour > 0" class="text-sm">
+						<div class="flex items-center space-x-2">
+							<span class="text-gray-500">Current hour:</span>
+							<span :class="rateLimitStatus.isLimited ? 'text-error-600 font-medium' : 'text-gray-900 dark:text-white'">
+								{{ rateLimitStatus.currentHourCount.toLocaleString() }} / {{ maxEventsPerHour.toLocaleString() }}
+							</span>
+							<span v-if="rateLimitStatus.isLimited" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-error-100 text-error-800 dark:bg-error-900/30 dark:text-error-400">
+								Rate limited
+							</span>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Data Retention -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Data Retention</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Configure how long event data is kept. Older events, stats, and empty issues will be automatically deleted.
+				</p>
+
+				<div class="flex items-center space-x-4">
+					<select v-model.number="retentionDays" class="input w-auto">
+						<option :value="0">Keep forever</option>
+						<option :value="7">7 days</option>
+						<option :value="30">30 days</option>
+						<option :value="90">90 days</option>
+						<option :value="180">180 days</option>
+						<option :value="365">1 year</option>
+					</select>
+					<button
+						class="btn btn-primary"
+						:disabled="savingRetention"
+						@click="saveRetention"
+					>
+						{{ savingRetention ? 'Saving...' : 'Save' }}
+					</button>
+					<span v-if="retentionSaved" class="text-sm text-green-600 dark:text-green-400">Saved!</span>
 				</div>
 			</div>
 

@@ -90,9 +90,12 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🔍 Stack Traces**: Full stack trace visualization with code context
 - **👥 User Tracking**: See how many users are affected by each issue
 - **🏷️ Tags & Context**: View tags, breadcrumbs, and contextual data
+- **🔎 Tag-Based Filtering**: Search and filter issues by tag key-value pairs (e.g., browser, OS, environment)
 - **✅ Issue Management**: Mark issues as resolved or ignored
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
 - **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint
+- **⚡ Rate Limiting**: Configurable per-project event quotas to prevent runaway error loops from overwhelming the system
+- **🗑️ Data Retention**: Configurable per-project retention policies with automatic cleanup
 
 ## Prerequisites
 
@@ -300,6 +303,12 @@ Workers Sentinel is built with modern web technologies:
 
 Each project has its own isolated Durable Object with SQLite storage, ensuring data isolation and scalability.
 
+**Rate Limiting:**
+- Per-project configurable hourly event quotas stored in the ProjectState DO
+- In-memory counter with persistent backup in SQLite for fast O(1) checks
+- Returns HTTP 429 with `Retry-After` header when quota is exceeded — Sentry SDKs handle this gracefully
+- Default is unlimited (0); configurable via dashboard or `PATCH /api/projects/:slug`
+
 ## Roadmap & Future Enhancements
 
 Planned features for future releases:
@@ -312,10 +321,10 @@ Planned features for future releases:
 - [ ] Session replay support
 - [ ] Team/organization support
 - [ ] Issue assignment
-- [ ] Search functionality
+- [x] Tag-based search and filtering
 - [ ] Time-series charts
-- [ ] Rate limiting per project
-- [ ] Event retention policies
+- [x] Rate limiting per project
+- [x] Event retention policies
 
 ## Known Limitations
 

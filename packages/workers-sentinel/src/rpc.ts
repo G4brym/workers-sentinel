@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { extractEvents } from './lib/envelope-parser';
-import type { EnvelopeItem, Env, Project } from './types';
+import type { Env, EnvelopeItem, Project } from './types';
 
 // Sentry envelope format: [header, ...items] where each item is [itemHeader, payload]
 type SentryEnvelope = [Record<string, unknown>, Array<[Record<string, unknown>, unknown]>];
@@ -123,6 +123,10 @@ export class SentinelRpc extends WorkerEntrypoint<Env> {
 						body: JSON.stringify(event),
 					}),
 				);
+
+				if (response.status === 429) {
+					return { status: 429 };
+				}
 
 				if (response.ok && !firstEventId) {
 					const result = (await response.json()) as { eventId: string };
