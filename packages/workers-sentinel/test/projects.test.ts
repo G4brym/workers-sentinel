@@ -338,6 +338,139 @@ describe('Project Routes', () => {
 		});
 	});
 
+	describe('GET /api/projects/:slug/settings', () => {
+		it('should return default retention settings', async () => {
+			const user = await createTestUser({
+				email: `settings-default-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Settings Default User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Settings Default Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/settings`,
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { retentionDays: number };
+			expect(data.retentionDays).toBe(0); // Default: keep forever
+		});
+
+		it('should reject unauthenticated requests', async () => {
+			const response = await SELF.fetch('http://localhost/api/projects/some-slug/settings');
+			expect(response.status).toBe(401);
+		});
+	});
+
+	describe('PATCH /api/projects/:slug (retention settings)', () => {
+		it('should update retention settings', async () => {
+			const user = await createTestUser({
+				email: `settings-update-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Settings Update User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Settings Update Project' });
+
+			const patchResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ retentionDays: 30 }),
+				},
+			);
+
+			expect(patchResponse.status).toBe(200);
+			const patchData = (await patchResponse.json()) as { retentionDays: number };
+			expect(patchData.retentionDays).toBe(30);
+
+			// Verify settings persisted
+			const getResponse = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}/settings`,
+			);
+
+			expect(getResponse.status).toBe(200);
+			const getData = (await getResponse.json()) as { retentionDays: number };
+			expect(getData.retentionDays).toBe(30);
+		});
+
+		it('should allow disabling retention', async () => {
+			const user = await createTestUser({
+				email: `settings-disable-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Settings Disable User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Settings Disable Project' });
+
+			// First enable retention
+			await authFetch(user.token!, `http://localhost/api/projects/${project.slug}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ retentionDays: 30 }),
+			});
+
+			// Then disable it
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ retentionDays: 0 }),
+				},
+			);
+
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { retentionDays: number };
+			expect(data.retentionDays).toBe(0);
+		});
+
+		it('should reject invalid retention values', async () => {
+			const user = await createTestUser({
+				email: `settings-invalid-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Settings Invalid User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Settings Invalid Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({ retentionDays: -1 }),
+				},
+			);
+
+			expect(response.status).toBe(400);
+		});
+
+		it('should return 400 when no updates provided', async () => {
+			const user = await createTestUser({
+				email: `settings-noop-${Date.now()}@example.com`,
+				password: 'testpassword123',
+				name: 'Settings Noop User',
+			});
+
+			const project = await createTestProject(user.token!, { name: 'Settings Noop Project' });
+
+			const response = await authFetch(
+				user.token!,
+				`http://localhost/api/projects/${project.slug}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({}),
+				},
+			);
+
+			expect(response.status).toBe(400);
+		});
+	});
+
 	describe('DELETE /api/projects/:slug', () => {
 		it('should delete project as owner', async () => {
 			const user = await createTestUser({

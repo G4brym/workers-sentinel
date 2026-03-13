@@ -34,6 +34,9 @@ const maxEventsPerHour = ref<number>(0);
 const rateLimitStatus = ref<{ currentHourCount: number; isLimited: boolean } | null>(null);
 const savingConfig = ref(false);
 const configSaved = ref(false);
+const retentionDays = ref<number>(0);
+const savingRetention = ref(false);
+const retentionSaved = ref(false);
 
 async function loadProject() {
 	loading.value = true;
@@ -46,6 +49,11 @@ async function loadProject() {
 		project.value = response.project;
 		dsn.value = response.dsn;
 		webhookUrl.value = response.project.webhookUrl || '';
+
+		const settingsResponse = await api.get<{ retentionDays: number }>(
+			`/api/projects/${slug.value}/settings`,
+		);
+		retentionDays.value = settingsResponse.retentionDays;
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to load project';
 	} finally {
@@ -134,6 +142,23 @@ async function saveRateLimit() {
 	} finally {
 		savingConfig.value = false;
 	}
+}
+
+async function saveRetention() {
+	savingRetention.value = true;
+	retentionSaved.value = false;
+	try {
+		await api.patch(`/api/projects/${slug.value}`, {
+			retentionDays: retentionDays.value,
+		});
+		retentionSaved.value = true;
+		setTimeout(() => {
+			retentionSaved.value = false;
+		}, 3000);
+	} catch (err) {
+		error.value = err instanceof Error ? err.message : 'Failed to save settings';
+	} finally {
+		savingRetention.value = false;	}
 }
 
 function copyDsn() {
@@ -311,6 +336,33 @@ onMounted(() => {
 							</span>
 						</div>
 					</div>
+				</div>
+			</div>
+
+			<!-- Data Retention -->
+			<div class="card p-6">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Data Retention</h2>
+				<p class="text-sm text-gray-500 mb-4">
+					Configure how long event data is kept. Older events, stats, and empty issues will be automatically deleted.
+				</p>
+
+				<div class="flex items-center space-x-4">
+					<select v-model.number="retentionDays" class="input w-auto">
+						<option :value="0">Keep forever</option>
+						<option :value="7">7 days</option>
+						<option :value="30">30 days</option>
+						<option :value="90">90 days</option>
+						<option :value="180">180 days</option>
+						<option :value="365">1 year</option>
+					</select>
+					<button
+						class="btn btn-primary"
+						:disabled="savingRetention"
+						@click="saveRetention"
+					>
+						{{ savingRetention ? 'Saving...' : 'Save' }}
+					</button>
+					<span v-if="retentionSaved" class="text-sm text-green-600 dark:text-green-400">Saved!</span>
 				</div>
 			</div>
 

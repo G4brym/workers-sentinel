@@ -63,6 +63,10 @@ export interface IssueMetadata {
 	function?: string;
 }
 
+export interface ProjectSettings {
+	retentionDays: number; // 0 = keep forever, otherwise number of days
+}
+
 // Sentry event types
 export interface SentryEvent {
 	event_id: string;

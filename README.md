@@ -95,6 +95,7 @@ Workers Sentinel gives you a private, self-hosted error tracking solution with a
 - **🌐 Multi-Project**: Create multiple projects with isolated data storage
 - **🔔 Webhook Notifications**: Get notified when new issues are detected via Slack, Discord, or any HTTP endpoint
 - **⚡ Rate Limiting**: Configurable per-project event quotas to prevent runaway error loops from overwhelming the system
+- **🗑️ Data Retention**: Configurable per-project retention policies with automatic cleanup
 
 ## Prerequisites
 
@@ -323,7 +324,7 @@ Planned features for future releases:
 - [x] Tag-based search and filtering
 - [ ] Time-series charts
 - [x] Rate limiting per project
-- [ ] Event retention policies
+- [x] Event retention policies
 
 ## Known Limitations
 
