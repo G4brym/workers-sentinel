@@ -620,12 +620,14 @@ export class ProjectState extends DurableObject<Env> {
 		}
 
 		if (status) {
-			const cursor = this.sql.exec(
+			this.sql.exec(
 				`UPDATE issues SET status = ? WHERE id IN (${placeholders})`,
 				status,
 				...issueIds,
 			);
-			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
+			const changedRow = this.sql.exec('SELECT changes() as n').one();
+			const affected = changedRow ? (changedRow.n as number) : 0;
+			return this.jsonResponse({ success: true, affected });
 		}
 
 		return this.jsonResponse({ error: 'no_action' }, 400);
@@ -897,6 +899,8 @@ export class ProjectState extends DurableObject<Env> {
 			topIssues,
 			totalUsers: (userCountRow?.count as number) || 0,
 		});
+	}
+
 	private async handleGetComments(request: Request): Promise<Response> {
 		const { issueId } = (await request.json()) as { issueId: string };
 
@@ -994,9 +998,9 @@ export class ProjectState extends DurableObject<Env> {
 		// Delete corresponding activity entry, scoped by issue_id for efficiency
 		const commentIssueId = issueId || (comment.issue_id as string);
 		this.sql.exec(
-			`DELETE FROM issue_activity WHERE type = 'comment' AND issue_id = ? AND data LIKE ?`,
+			`DELETE FROM issue_activity WHERE type = 'comment' AND issue_id = ? AND json_extract(data, '$.commentId') = ?`,
 			commentIssueId,
-			`%"commentId":"${commentId}"%`,
+			commentId,
 		);
 
 		return this.jsonResponse({ success: true });
