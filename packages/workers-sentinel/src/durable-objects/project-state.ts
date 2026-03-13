@@ -117,7 +117,7 @@ export class ProjectState extends DurableObject<Env> {
 		if (!alarm) {
 			const retentionDays = this.getRetentionDays();
 			if (retentionDays > 0) {
-				this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+				await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 			}
 		}
 	}
@@ -860,7 +860,7 @@ export class ProjectState extends DurableObject<Env> {
 		);
 
 		// Reschedule alarm for tomorrow
-		this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+		await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 	}
 
 	private getRetentionDays(): number {
@@ -892,10 +892,10 @@ export class ProjectState extends DurableObject<Env> {
 
 		if (retentionDays > 0) {
 			// Schedule alarm for cleanup (24 hours from now)
-			this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
+			await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 		} else {
 			// Disable retention — cancel any pending alarm
-			this.ctx.storage.deleteAlarm();
+			await this.ctx.storage.deleteAlarm();
 		}
 
 		return this.jsonResponse({ retentionDays });

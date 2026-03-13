@@ -189,11 +189,6 @@ export interface PaginatedResponse<T> {
 	hasMore: boolean;
 }
 
-// Project settings types
-export interface ProjectSettings {
-	retentionDays: number; // 0 = keep forever, otherwise number of days
-}
-
 // Hono context types
 export interface AuthContext {
 	user: User;

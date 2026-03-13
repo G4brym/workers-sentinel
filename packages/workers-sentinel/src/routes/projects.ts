@@ -329,7 +329,8 @@ projectRoutes.post('/:slug/test-webhook', async (c) => {
 			{ error: 'webhook_error', message: err instanceof Error ? err.message : 'Failed to reach webhook URL' },
 			502,
 		);
-	}});
+	}
+});
 
 // Delete a project
 projectRoutes.delete('/:slug', async (c) => {
