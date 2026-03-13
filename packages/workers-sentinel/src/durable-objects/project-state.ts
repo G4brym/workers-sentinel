@@ -1044,7 +1044,8 @@ export class ProjectState extends DurableObject<Env> {
 		const lastEntry = activity.length > 0 ? activity[activity.length - 1] : undefined;
 		const nextCursor = hasMore && lastEntry ? `${lastEntry.createdAt}|${lastEntry.id}` : undefined;
 
-		return this.jsonResponse({ activity, nextCursor, hasMore });	}
+		return this.jsonResponse({ activity, nextCursor, hasMore });
+	}
 
 	private getHourBucket(timestamp: string): string {
 		const date = new Date(timestamp);
