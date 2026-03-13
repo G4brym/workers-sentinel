@@ -99,6 +99,16 @@ export interface IssueActivity {
 	createdAt: string;
 }
 
+// Release types
+export interface Release {
+	version: string;
+	firstSeen: string;
+	lastSeen: string;
+	eventCount: number;
+	issueCount: number;
+	newIssueCount: number;
+}
+
 // Sentry event types
 export interface SentryEvent {
 	event_id: string;

@@ -126,6 +126,27 @@ CREATE TABLE IF NOT EXISTS issue_activity (
   FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_activity_issue ON issue_activity(issue_id);
+
+CREATE TABLE IF NOT EXISTS releases (
+  version TEXT PRIMARY KEY,
+  first_seen TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  event_count INTEGER NOT NULL DEFAULT 0,
+  issue_count INTEGER NOT NULL DEFAULT 0,
+  new_issue_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_releases_last_seen ON releases(last_seen DESC);
+
+CREATE TABLE IF NOT EXISTS release_issues (
+  release_version TEXT NOT NULL,
+  issue_id TEXT NOT NULL,
+  first_seen_in_release TEXT NOT NULL,
+  event_count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (release_version, issue_id),
+  FOREIGN KEY (release_version) REFERENCES releases(version) ON DELETE CASCADE,
+  FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_release_issues_issue_id ON release_issues(issue_id);
 `;
 
 export class ProjectState extends DurableObject<Env> {
@@ -209,6 +230,10 @@ export class ProjectState extends DurableObject<Env> {
 					return this.handleDeleteComment(request);
 				case '/issue/activity':
 					return this.handleGetActivity(request);
+				case '/releases':
+					return this.handleGetReleases(request);
+				case '/release':
+					return this.handleGetRelease(request);
 				default:
 					return new Response(JSON.stringify({ error: 'not_found' }), {
 						status: 404,
@@ -254,7 +279,7 @@ export class ProjectState extends DurableObject<Env> {
 
 		// Check for existing issue
 		const existingRows = this.sql
-			.exec('SELECT id, count FROM issues WHERE fingerprint = ?', fingerprint)
+			.exec('SELECT id, count, status FROM issues WHERE fingerprint = ?', fingerprint)
 			.toArray();
 		const existingIssue = existingRows.length > 0 ? existingRows[0] : null;
 
@@ -365,6 +390,70 @@ export class ProjectState extends DurableObject<Env> {
 				now,
 				now,
 			);
+		}
+
+		// Track release and detect regressions
+		if (event.release) {
+			try {
+				const releaseVersion = event.release;
+				const isNewIssue = !existingIssue;
+
+				// Upsert release record
+				this.sql.exec(
+					`INSERT INTO releases (version, first_seen, last_seen, event_count, issue_count, new_issue_count)
+					 VALUES (?, ?, ?, 1, 0, 0)
+					 ON CONFLICT (version) DO UPDATE SET
+					   last_seen = ?,
+					   event_count = event_count + 1`,
+					releaseVersion,
+					now,
+					now,
+					now,
+				);
+
+				// Link issue to release
+				const existingLink = this.sql
+					.exec(
+						'SELECT release_version FROM release_issues WHERE release_version = ? AND issue_id = ?',
+						releaseVersion,
+						issueId,
+					)
+					.toArray();
+
+				if (existingLink.length > 0) {
+					this.sql.exec(
+						'UPDATE release_issues SET event_count = event_count + 1 WHERE release_version = ? AND issue_id = ?',
+						releaseVersion,
+						issueId,
+					);
+				} else {
+					this.sql.exec(
+						'INSERT INTO release_issues (release_version, issue_id, first_seen_in_release, event_count) VALUES (?, ?, ?, 1)',
+						releaseVersion,
+						issueId,
+						now,
+					);
+					// Update issue_count on the release
+					this.sql.exec(
+						'UPDATE releases SET issue_count = issue_count + 1 WHERE version = ?',
+						releaseVersion,
+					);
+					// If this is a brand new issue, increment new_issue_count
+					if (isNewIssue) {
+						this.sql.exec(
+							'UPDATE releases SET new_issue_count = new_issue_count + 1 WHERE version = ?',
+							releaseVersion,
+						);
+					}
+				}
+
+				// Regression detection: reopen resolved issues
+				if (existingIssue && existingIssue.status === 'resolved') {
+					this.sql.exec("UPDATE issues SET status = 'unresolved' WHERE id = ?", issueId);
+				}
+			} catch (e) {
+				console.error('Release tracking failed:', e);
+			}
 		}
 
 		// Track unique users
@@ -818,6 +907,83 @@ export class ProjectState extends DurableObject<Env> {
 		}));
 
 		return this.jsonResponse({ key, values });
+	private async handleGetReleases(request: Request): Promise<Response> {
+		const { cursor, limit } = (await request.json()) as {
+			cursor?: string;
+			limit?: number;
+		};
+
+		const pageLimit = Math.min(limit || 25, 100);
+		const params: (string | number)[] = [];
+
+		let sql = 'SELECT * FROM releases WHERE 1=1';
+
+		if (cursor) {
+			sql += ' AND last_seen < ?';
+			params.push(cursor);
+		}
+
+		sql += ' ORDER BY last_seen DESC LIMIT ?';
+		params.push(pageLimit + 1);
+
+		const rows = this.sql.exec(sql, ...params).toArray();
+		const hasMore = rows.length > pageLimit;
+		const releases = rows.slice(0, pageLimit).map((row) => ({
+			version: row.version as string,
+			firstSeen: row.first_seen as string,
+			lastSeen: row.last_seen as string,
+			eventCount: row.event_count as number,
+			issueCount: row.issue_count as number,
+			newIssueCount: row.new_issue_count as number,
+		}));
+
+		const nextCursor =
+			hasMore && releases.length > 0 ? releases[releases.length - 1].lastSeen : undefined;
+
+		return this.jsonResponse({ releases, nextCursor, hasMore });
+	}
+
+	private async handleGetRelease(request: Request): Promise<Response> {
+		const { version } = (await request.json()) as { version: string };
+
+		const releaseRows = this.sql
+			.exec('SELECT * FROM releases WHERE version = ?', version)
+			.toArray();
+
+		if (releaseRows.length === 0) {
+			return this.jsonResponse({ error: 'release_not_found' }, 404);
+		}
+
+		const row = releaseRows[0];
+		const release = {
+			version: row.version as string,
+			firstSeen: row.first_seen as string,
+			lastSeen: row.last_seen as string,
+			eventCount: row.event_count as number,
+			issueCount: row.issue_count as number,
+			newIssueCount: row.new_issue_count as number,
+		};
+
+		// Get issues for this release
+		const issueRows = this.sql
+			.exec(
+				`SELECT i.*, ri.first_seen_in_release, ri.event_count as release_event_count
+				 FROM release_issues ri
+				 JOIN issues i ON i.id = ri.issue_id
+				 WHERE ri.release_version = ?
+				 ORDER BY ri.event_count DESC
+				 LIMIT 100`,
+				version,
+			)
+			.toArray();
+
+		const issues = issueRows.map((r) => ({
+			...this.rowToIssue(r),
+			firstSeenInRelease: r.first_seen_in_release as string,
+			releaseEventCount: r.release_event_count as number,
+		}));
+
+		return this.jsonResponse({ release, issues });
 	}
 
 	private handleGetEnvironments(): Response {
