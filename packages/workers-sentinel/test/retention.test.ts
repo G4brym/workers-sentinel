@@ -1,11 +1,6 @@
 import { env, runDurableObjectAlarm } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import {
-	authFetch,
-	createTestProject,
-	createTestUser,
-	sendTestEvent,
-} from './utils';
+import { authFetch, createTestProject, createTestUser, sendTestEvent } from './utils';
 
 describe('Retention & Alarm Cleanup', () => {
 	let testUser: Awaited<ReturnType<typeof createTestUser>>;
@@ -46,9 +41,7 @@ describe('Retention & Alarm Cleanup', () => {
 			expect(patchResponse.status).toBe(200);
 
 			// Trigger alarm via test helper
-			const stub = env.PROJECT_STATE.get(
-				env.PROJECT_STATE.idFromName(project.id),
-			);
+			const stub = env.PROJECT_STATE.get(env.PROJECT_STATE.idFromName(project.id));
 			const ran = await runDurableObjectAlarm(stub);
 			expect(ran).toBe(true);
 
@@ -76,20 +69,14 @@ describe('Retention & Alarm Cleanup', () => {
 			});
 
 			// Set retention to 0 (keep forever)
-			await authFetch(
-				testUser.token!,
-				`http://localhost/api/projects/${project.slug}`,
-				{
-					method: 'PATCH',
-					body: JSON.stringify({ retentionDays: 0 }),
-				},
-			);
+			await authFetch(testUser.token!, `http://localhost/api/projects/${project.slug}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ retentionDays: 0 }),
+			});
 
 			// Trigger alarm — should be a no-op since retention is disabled
-			const stub = env.PROJECT_STATE.get(
-				env.PROJECT_STATE.idFromName(project.id),
-			);
-			const ran = await runDurableObjectAlarm(stub);
+			const stub = env.PROJECT_STATE.get(env.PROJECT_STATE.idFromName(project.id));
+			const _ran = await runDurableObjectAlarm(stub);
 			// Alarm may not be scheduled since retention is 0, so ran could be false
 			// Either way, events should still exist
 
@@ -110,19 +97,13 @@ describe('Retention & Alarm Cleanup', () => {
 			});
 
 			// Set retention to 30 days (schedules alarm)
-			await authFetch(
-				testUser.token!,
-				`http://localhost/api/projects/${project.slug}`,
-				{
-					method: 'PATCH',
-					body: JSON.stringify({ retentionDays: 30 }),
-				},
-			);
+			await authFetch(testUser.token!, `http://localhost/api/projects/${project.slug}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ retentionDays: 30 }),
+			});
 
 			// Trigger alarm — should run without error on empty project
-			const stub = env.PROJECT_STATE.get(
-				env.PROJECT_STATE.idFromName(project.id),
-			);
+			const stub = env.PROJECT_STATE.get(env.PROJECT_STATE.idFromName(project.id));
 			const ran = await runDurableObjectAlarm(stub);
 			expect(ran).toBe(true);
 
@@ -144,18 +125,12 @@ describe('Retention & Alarm Cleanup', () => {
 			});
 
 			// Set retention to 7 days
-			await authFetch(
-				testUser.token!,
-				`http://localhost/api/projects/${project.slug}`,
-				{
-					method: 'PATCH',
-					body: JSON.stringify({ retentionDays: 7 }),
-				},
-			);
+			await authFetch(testUser.token!, `http://localhost/api/projects/${project.slug}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ retentionDays: 7 }),
+			});
 
-			const stub = env.PROJECT_STATE.get(
-				env.PROJECT_STATE.idFromName(project.id),
-			);
+			const stub = env.PROJECT_STATE.get(env.PROJECT_STATE.idFromName(project.id));
 
 			// Trigger alarm
 			const ran = await runDurableObjectAlarm(stub);
