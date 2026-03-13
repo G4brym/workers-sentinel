@@ -562,10 +562,7 @@ export class ProjectState extends DurableObject<Env> {
 		const placeholders = issueIds.map(() => '?').join(', ');
 
 		if (action === 'delete') {
-			const cursor = this.sql.exec(
-				`DELETE FROM issues WHERE id IN (${placeholders})`,
-				...issueIds,
-			);
+			const cursor = this.sql.exec(`DELETE FROM issues WHERE id IN (${placeholders})`, ...issueIds);
 			return this.jsonResponse({ success: true, affected: cursor.rowsWritten });
 		}
 
@@ -990,9 +987,7 @@ export class ProjectState extends DurableObject<Env> {
 		const retentionDays = this.getRetentionDays();
 		if (retentionDays <= 0) return;
 
-		const cutoffDate = new Date(
-			Date.now() - retentionDays * MS_PER_DAY,
-		).toISOString();
+		const cutoffDate = new Date(Date.now() - retentionDays * MS_PER_DAY).toISOString();
 
 		// Delete old events
 		this.sql.exec('DELETE FROM events WHERE received_at < ?', cutoffDate);
@@ -1021,18 +1016,14 @@ export class ProjectState extends DurableObject<Env> {
 		this.sql.exec('DELETE FROM issues WHERE count = 0');
 
 		// Clean up orphaned issue_users for deleted issues
-		this.sql.exec(
-			'DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)',
-		);
+		this.sql.exec('DELETE FROM issue_users WHERE issue_id NOT IN (SELECT id FROM issues)');
 
 		// Reschedule alarm for tomorrow
 		await this.ctx.storage.setAlarm(Date.now() + MS_PER_DAY);
 	}
 
 	private getRetentionDays(): number {
-		const rows = this.sql
-			.exec("SELECT value FROM settings WHERE key = 'retention_days'")
-			.toArray();
+		const rows = this.sql.exec("SELECT value FROM settings WHERE key = 'retention_days'").toArray();
 		return rows.length > 0 ? Number.parseInt(rows[0].value as string, 10) : 0;
 	}
 
@@ -1044,9 +1035,16 @@ export class ProjectState extends DurableObject<Env> {
 	private async handleUpdateSettings(request: Request): Promise<Response> {
 		const { retentionDays } = (await request.json()) as ProjectSettings;
 
-		if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
+		if (
+			typeof retentionDays !== 'number' ||
+			!Number.isInteger(retentionDays) ||
+			retentionDays < 0
+		) {
 			return this.jsonResponse(
-				{ error: 'invalid_retention_days', message: 'retentionDays must be 0 or a positive integer' },
+				{
+					error: 'invalid_retention_days',
+					message: 'retentionDays must be 0 or a positive integer',
+				},
 				400,
 			);
 		}

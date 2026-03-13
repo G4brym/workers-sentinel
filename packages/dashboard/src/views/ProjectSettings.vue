@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { api, ApiError } from '../api/client';
+import { ApiError, api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { useProjectsStore } from '../stores/projects';
 
@@ -256,7 +256,8 @@ async function saveRetention() {
 	} catch (err) {
 		error.value = err instanceof Error ? err.message : 'Failed to save settings';
 	} finally {
-		savingRetention.value = false;	}
+		savingRetention.value = false;
+	}
 }
 
 function copyDsn() {
