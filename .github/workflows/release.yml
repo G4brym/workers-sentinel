@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release:
-    name: Release
+    if: ${{ github.repository_owner == 'G4brym' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -29,27 +29,22 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
+      - name: Install modules
+        run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Build dashboard
-        run: pnpm --filter @workers-sentinel/dashboard build
+      - name: Run build
+        run: pnpm lint && pnpm build
 
       - name: Run tests
         run: pnpm --filter workers-sentinel test
 
-      - name: Create Release Pull Request or Publish
+      - name: Create release PR or publish
         uses: changesets/action@v1
         with:
-          publish: pnpm --filter workers-sentinel publish --provenance --access public --no-git-checks
+          publish: pnpm exec changeset publish
           version: pnpm changeset version
           title: "Version Packages"
           commit: "Version Packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
