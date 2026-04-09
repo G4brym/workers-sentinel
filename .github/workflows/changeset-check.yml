@@ -1,16 +1,22 @@
 name: Changeset Check
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches: [main]
-
-concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
   changeset-check:
     name: Changeset Check
     if: github.head_ref != 'changeset-release/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,5 +31,5 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Check for changesets
+      - name: Check for changeset
         run: pnpm exec changeset status --since=origin/main
