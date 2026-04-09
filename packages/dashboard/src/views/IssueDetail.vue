@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { api } from '../api/client';
-import { useAuthStore } from '../stores/auth';
 import { type ResolvedFrame, resolveFrame } from '../lib/sourcemap-resolver';
+import { useAuthStore } from '../stores/auth';
 
 interface Issue {
 	id: string;

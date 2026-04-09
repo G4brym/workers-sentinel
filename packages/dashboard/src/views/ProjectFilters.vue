@@ -36,9 +36,7 @@ const filterTypeLabels: Record<string, string> = {
 	environment: 'Environment',
 };
 
-const totalDropped = computed(() =>
-	filters.value.reduce((sum, f) => sum + f.droppedCount, 0),
-);
+const totalDropped = computed(() => filters.value.reduce((sum, f) => sum + f.droppedCount, 0));
 
 const suggestions = [
 	{
